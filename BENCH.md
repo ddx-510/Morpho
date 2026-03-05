@@ -63,12 +63,68 @@
 
 ---
 
+## 2026-03-05 — After Parallel Execution
+
+**Same target, config, and provider as above.**
+**Change:** agents now run concurrently within each tick via goroutines.
+
+### Results
+
+| Metric                  |  Single |   Morpho |
+|-------------------------|--------:|---------:|
+| LLM calls               |       1 |       24 |
+| Total findings           |      84 |       24 |
+| Code-specific findings   |      27 |       22 |
+| Specialist roles         |       1 |        4 |
+| Regions covered          |      10 |        8 |
+| Wall time                | 41.05s  |  1m40.5s |
+| Tissue clusters          |     n/a |        2 |
+
+### Timing Impact
+
+| Version    | Morpho Wall Time | Speedup |
+|------------|-----------------|---------|
+| Sequential | 7m27.68s        | —       |
+| Parallel   | 1m40.5s         | 4.5x   |
+
+### Morpho Role Breakdown
+
+| Role              | Findings |
+|-------------------|----------|
+| security_auditor  |       12 |
+| refactorer        |        5 |
+| test_writer       |        4 |
+| documenter        |        3 |
+
+### Morpho Region Breakdown
+
+| Region | Findings |
+|--------|----------|
+| llm    |        5 |
+| agent  |        5 |
+| cmd    |        3 |
+| root   |        3 |
+| field  |        3 |
+| config |        2 |
+| tool   |        2 |
+| scan   |        1 |
+
+### Analysis
+
+- **4.5x speedup** from parallel agent execution — agents at different points make independent LLM calls concurrently
+- **Better region coverage** (8/13 vs 5/13 previously) — faster ticks allow agents to reach more regions
+- **More balanced role distribution** — security_auditor emerged as dominant role (12 findings) due to high security signals in config/scan/root
+- Morpho wall time now only ~2.5x single agent (vs ~10x before)
+- Remaining gap is inherent: morpho makes 24 LLM calls vs 1, but each is scoped and specialized
+
+---
+
 ## Improvement Roadmap
 
-### Timing (Priority)
-1. **Parallel agent execution** — agents at different points are independent; run them concurrently with goroutines
-2. **Batch LLM calls** — group agents by region and send concurrent requests
-3. **Reduce redundant ticks** — agents re-analyzing same files each tick waste LLM calls; cache file reads across ticks
+### Timing
+1. ~~**Parallel agent execution**~~ — DONE (4.5x speedup)
+2. **Reduce redundant ticks** — agents re-analyzing same files each tick waste LLM calls; cache file reads across ticks
+3. **Smarter spawning** — don't spawn agents in regions that already have active specialists
 
 ### Quality
 1. **Finding deduplication** — hash or embed findings to suppress near-duplicates

@@ -2,6 +2,7 @@ package morphogen
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/ddx-510/Morpho/field"
 )
@@ -45,6 +46,7 @@ func (s Signal) String() string {
 
 // Bus is a stigmergic signaling bus that reshapes the gradient field.
 type Bus struct {
+	mu    sync.Mutex
 	queue []Signal
 }
 
@@ -53,15 +55,21 @@ func NewBus() *Bus {
 	return &Bus{}
 }
 
-// Emit queues a morphogen signal.
+// Emit queues a morphogen signal. Safe for concurrent use.
 func (b *Bus) Emit(s Signal) {
+	b.mu.Lock()
 	b.queue = append(b.queue, s)
+	b.mu.Unlock()
 }
 
 // Flush applies all queued signals to the gradient field and clears the queue.
 func (b *Bus) Flush(f *field.GradientField) []Signal {
-	applied := b.queue
-	for _, s := range b.queue {
+	b.mu.Lock()
+	applied := make([]Signal, len(b.queue))
+	copy(applied, b.queue)
+	b.queue = b.queue[:0]
+	b.mu.Unlock()
+	for _, s := range applied {
 		switch s.Kind {
 		case PRESENCE:
 			// Slight suppression: signals presence so others diffuse away.
@@ -77,11 +85,12 @@ func (b *Bus) Flush(f *field.GradientField) []Signal {
 			f.AddSignal(s.PointID, s.Channel, s.Value*2)
 		}
 	}
-	b.queue = b.queue[:0]
 	return applied
 }
 
 // Pending returns the number of queued signals.
 func (b *Bus) Pending() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	return len(b.queue)
 }

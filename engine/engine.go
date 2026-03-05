@@ -3,6 +3,7 @@ package engine
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ddx-510/Morpho/agent"
@@ -158,14 +159,45 @@ func (e *Engine) stepDifferentiate() {
 	}
 }
 
+type workResult struct {
+	agent *agent.Agent
+	work  string
+}
+
 func (e *Engine) stepWork() {
+	// Collect agents that will work this tick.
+	var working []*agent.Agent
 	for _, a := range e.Agents {
-		if work := a.Work(e.Field, e.Bus); work != "" {
+		if a.State == agent.Alive && a.Role != agent.Undifferentiated {
+			working = append(working, a)
+		}
+	}
+	if len(working) == 0 {
+		return
+	}
+
+	// Run all agent work in parallel — each agent reads its own region
+	// and makes one LLM call, so they are independent.
+	results := make([]workResult, len(working))
+	var wg sync.WaitGroup
+	for i, a := range working {
+		wg.Add(1)
+		go func(idx int, ag *agent.Agent) {
+			defer wg.Done()
+			work := ag.Work(e.Field, e.Bus)
+			results[idx] = workResult{agent: ag, work: work}
+		}(i, a)
+	}
+	wg.Wait()
+
+	// Collect results sequentially to avoid races on engine state.
+	for _, r := range results {
+		if r.work != "" {
 			e.llmCalls++
-			e.result.Findings = append(e.result.Findings, work)
-			e.result.ByRole[string(a.Role)]++
-			e.result.ByPoint[a.PointID]++
-			e.log(fmt.Sprintf("  %s", work))
+			e.result.Findings = append(e.result.Findings, r.work)
+			e.result.ByRole[string(r.agent.Role)]++
+			e.result.ByPoint[r.agent.PointID]++
+			e.log(fmt.Sprintf("  %s", r.work))
 		}
 	}
 }

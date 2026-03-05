@@ -82,6 +82,16 @@ func main() {
 	}
 	eng := engine.New(f2, engCfg, tools2, longMem)
 	eng.Quiet()
+	eng.SetProgress(func(ev engine.ProgressEvent) {
+		switch ev.Kind {
+		case "tick":
+			fmt.Printf("  [tick %d/%d]\n", ev.Tick, ev.Total)
+		case "work_done":
+			fmt.Printf("    ✓ %s %s@%s (%d/%d)\n", ev.Role, ev.Agent, ev.Point, ev.Alive, ev.Total)
+		case "apoptosis":
+			fmt.Printf("    ✗ %s died (%s)\n", ev.Agent, ev.Role)
+		}
+	})
 	morphoResult := eng.Run()
 
 	fmt.Println(engine.PrintReport(morphoResult))

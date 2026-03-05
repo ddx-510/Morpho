@@ -66,9 +66,22 @@ func (r *Registry) ToLLMSpecs() []llm.ToolSpec {
 
 // ExecuteCall runs a tool call and returns the result.
 func (r *Registry) ExecuteCall(call llm.ToolCall) Result {
-	t, ok := r.tools[call.Name]
+	name := call.Name
+	// Some proxies prefix tool names (e.g. "proxy_read_file" -> "read_file").
+	t, ok := r.tools[name]
 	if !ok {
-		return Result{Err: fmt.Errorf("unknown tool: %s", call.Name)}
+		for _, prefix := range []string{"proxy_", "functions.", "tool_"} {
+			if strings.HasPrefix(name, prefix) {
+				if t2, ok2 := r.tools[strings.TrimPrefix(name, prefix)]; ok2 {
+					t = t2
+					ok = true
+					break
+				}
+			}
+		}
+	}
+	if !ok {
+		return Result{Err: fmt.Errorf("unknown tool: %s", name)}
 	}
 	return t.Execute(call.Args)
 }

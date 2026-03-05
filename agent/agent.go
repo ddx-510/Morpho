@@ -3,6 +3,7 @@ package agent
 import (
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/ddx-510/Morpho/field"
@@ -32,16 +33,6 @@ const (
 	Alive State = iota
 	Apoptotic
 )
-
-// roleToolMap maps roles to the tool names they prefer.
-var roleToolMap = map[Role][]string{
-	BugHunter:       {"grep", "read_file", "shell"},
-	TestWriter:      {"read_file", "shell", "patch_file"},
-	SecurityAuditor: {"grep", "read_file", "list_files"},
-	Refactorer:      {"read_file", "patch_file", "grep"},
-	Documenter:      {"read_file", "list_files", "grep"},
-	Optimizer:       {"read_file", "grep", "shell"},
-}
 
 // Agent is a morphogenetic agent that reads gradients and specializes.
 type Agent struct {
@@ -121,26 +112,42 @@ func (a *Agent) Differentiate(f *field.GradientField) {
 	}
 }
 
-// roleTools returns the LLM tool specs this agent's role can use.
-func (a *Agent) roleTools() []llm.ToolSpec {
+// readRegionFiles reads all source files in this agent's region directly,
+// returning their contents as a formatted string for the LLM prompt.
+func (a *Agent) readRegionFiles() string {
 	if a.tools == nil {
-		return nil
+		return ""
 	}
-	preferred, ok := roleToolMap[a.Role]
+	listTool, ok := a.tools.Get("list_files")
 	if !ok {
-		return a.tools.ToLLMSpecs()
+		return ""
 	}
-	var specs []llm.ToolSpec
-	for _, name := range preferred {
-		if t, ok := a.tools.Get(name); ok {
-			specs = append(specs, llm.ToolSpec{
-				Name:        t.Name(),
-				Description: t.Description(),
-				Parameters:  t.Parameters(),
-			})
+	listResult := listTool.Execute(map[string]string{"path": a.PointID})
+	if listResult.Err != nil || listResult.Output == "" || listResult.Output == "(empty directory)" {
+		return ""
+	}
+
+	readTool, ok := a.tools.Get("read_file")
+	if !ok {
+		return ""
+	}
+
+	var buf strings.Builder
+	for _, file := range strings.Split(listResult.Output, "\n") {
+		file = strings.TrimSpace(file)
+		if file == "" {
+			continue
+		}
+		result := readTool.Execute(map[string]string{"path": file})
+		if result.Err == nil && result.Output != "" {
+			content := result.Output
+			if len(content) > 3000 {
+				content = content[:3000] + "\n... (truncated)"
+			}
+			fmt.Fprintf(&buf, "=== %s ===\n%s\n\n", file, content)
 		}
 	}
-	return specs
+	return buf.String()
 }
 
 // Work performs one tick of work based on the agent's role.
@@ -172,49 +179,37 @@ func (a *Agent) Work(f *field.GradientField, bus *morphogen.Bus) string {
 
 	a.IdleTicks = 0
 
-	// Build prompt with memory context.
+	// Pre-read all source files in this region — inject code directly into prompt.
+	codeContext := a.readRegionFiles()
+	if codeContext == "" {
+		codeContext = "(no source files found in this region)"
+	}
+
 	memCtx := a.ShortMem.Summary()
 
 	systemPrompt := fmt.Sprintf(`You are a %s specialist analyzing the "%s" region of a codebase.
 Signal %s = %.2f (0=fine, 1=critical).
 
+SOURCE CODE:
+%s
+
+Previous context: %s
+
 INSTRUCTIONS:
-1. Use the tools to read actual source files in the "%s/" directory.
-2. Find SPECIFIC issues — cite file names, function names, and quote problematic code.
-3. Do NOT narrate what you plan to do. Just do it and report findings.
-4. Output a numbered list of concrete findings. Each must reference a real file.`, a.Role, a.PointID, targetSig, localVal, a.PointID)
+- You have the source code above. Analyze it NOW.
+- Find SPECIFIC issues: cite file names, function names, line references, and quote problematic code.
+- Output a numbered list of concrete findings with severity.
+- Do NOT say "I need to read" or "Let me check" — the code is already provided above.`, a.Role, a.PointID, targetSig, localVal, codeContext, memCtx)
 
-	prompt := fmt.Sprintf("Previous findings:\n%s\nFind issues now. Use tools, then report.", memCtx)
-
-	// Round 1: call LLM with tools.
 	resp := a.provider.Generate(llm.Request{
 		SystemPrompt: systemPrompt,
-		UserPrompt:   prompt,
-		Tools:        a.roleTools(),
+		UserPrompt:   fmt.Sprintf("Analyze the %s source code above. List every %s issue you find.", a.PointID, a.Role),
 	})
 
 	if resp.Err != nil {
 		a.remember("error", resp.Err.Error())
 		a.IdleTicks++
 		return ""
-	}
-
-	// Execute tool calls and feed results back for a second round.
-	var toolOutput string
-	if a.tools != nil && len(resp.ToolCalls) > 0 {
-		toolOutput = a.tools.ExecuteCalls(resp.ToolCalls)
-		a.remember("tool_result", toolOutput)
-
-		// Round 2: feed tool results back to get actual analysis.
-		if toolOutput != "" {
-			followUp := a.provider.Generate(llm.Request{
-				SystemPrompt: systemPrompt,
-				UserPrompt: fmt.Sprintf("Tool results:\n%s\n\nBased on these results, list the specific issues you found. Each finding must cite a file and describe the actual problem.", toolOutput),
-			})
-			if followUp.Err == nil && followUp.Content != "" {
-				resp.Content = followUp.Content
-			}
-		}
 	}
 
 	content := resp.Content

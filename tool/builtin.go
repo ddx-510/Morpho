@@ -8,27 +8,68 @@ import (
 	"strings"
 )
 
-// ReadFile reads a file from the workspace.
+// ReadFile reads a file from the workspace. If the path is a directory, lists its contents.
 type ReadFile struct {
 	WorkDir string
 }
 
 func (t *ReadFile) Name() string        { return "read_file" }
-func (t *ReadFile) Description() string { return "Read the contents of a file in the workspace" }
+func (t *ReadFile) Description() string { return "Read a file's contents. If path is a directory, lists files in it." }
 func (t *ReadFile) Parameters() map[string]string {
-	return map[string]string{"path": "Relative path to the file"}
+	return map[string]string{"path": "Relative path to the file (e.g. agent/agent.go)"}
 }
 func (t *ReadFile) Execute(args map[string]string) Result {
-	path := filepath.Join(t.WorkDir, filepath.Clean(args["path"]))
-	// Prevent directory traversal outside workspace.
+	raw := args["path"]
+	if raw == "" {
+		return Result{Err: fmt.Errorf("path is required")}
+	}
+	path := filepath.Join(t.WorkDir, filepath.Clean(raw))
 	if !strings.HasPrefix(path, t.WorkDir) {
 		return Result{Err: fmt.Errorf("path escapes workspace")}
 	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		return Result{Err: err}
+	}
+
+	// If it's a directory, list files instead of failing.
+	if info.IsDir() {
+		return listDir(path, t.WorkDir)
+	}
+
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return Result{Err: err}
 	}
-	return Result{Output: string(data)}
+	content := string(data)
+	if len(content) > 8000 {
+		content = content[:8000] + "\n... (truncated)"
+	}
+	return Result{Output: content}
+}
+
+func listDir(dir, workDir string) Result {
+	var files []string
+	filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if info.IsDir() {
+			name := info.Name()
+			if name == ".git" || name == "node_modules" || name == "vendor" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		rel, _ := filepath.Rel(workDir, path)
+		files = append(files, rel)
+		return nil
+	})
+	if len(files) == 0 {
+		return Result{Output: "(empty directory)"}
+	}
+	return Result{Output: strings.Join(files, "\n")}
 }
 
 // GrepSearch searches file contents with a pattern.
@@ -37,11 +78,11 @@ type GrepSearch struct {
 }
 
 func (t *GrepSearch) Name() string        { return "grep" }
-func (t *GrepSearch) Description() string { return "Search for a pattern in workspace files" }
+func (t *GrepSearch) Description() string { return "Search for a text pattern in files. Returns matching lines with file:line: prefix." }
 func (t *GrepSearch) Parameters() map[string]string {
 	return map[string]string{
 		"pattern": "Text or regex pattern to search for",
-		"glob":    "File glob to restrict search (e.g. *.go)",
+		"path":    "Directory or file to search in (e.g. agent/ or agent/agent.go). Defaults to entire workspace.",
 	}
 }
 func (t *GrepSearch) Execute(args map[string]string) Result {
@@ -49,10 +90,11 @@ func (t *GrepSearch) Execute(args map[string]string) Result {
 	if pattern == "" {
 		return Result{Err: fmt.Errorf("pattern is required")}
 	}
-	cmdArgs := []string{"-rn", "--include", args["glob"], pattern, "."}
-	if args["glob"] == "" {
-		cmdArgs = []string{"-rn", pattern, "."}
+	searchPath := "."
+	if p := args["path"]; p != "" {
+		searchPath = p
 	}
+	cmdArgs := []string{"-rn", "--include=*.go", "--include=*.js", "--include=*.py", "--include=*.ts", "--include=*.rs", "--include=*.java", pattern, searchPath}
 	cmd := exec.Command("grep", cmdArgs...)
 	cmd.Dir = t.WorkDir
 	out, err := cmd.CombinedOutput()
@@ -61,7 +103,11 @@ func (t *GrepSearch) Execute(args map[string]string) Result {
 			return Result{Output: "(no matches)"}
 		}
 	}
-	return Result{Output: string(out)}
+	output := string(out)
+	if len(output) > 4000 {
+		output = output[:4000] + "\n... (truncated)"
+	}
+	return Result{Output: output}
 }
 
 // PatchFile applies a simple find-and-replace patch to a file.
@@ -116,34 +162,33 @@ func (t *Shell) Execute(args map[string]string) Result {
 	if err != nil {
 		result.Err = fmt.Errorf("%w: %s", err, string(out))
 	}
+	if len(result.Output) > 4000 {
+		result.Output = result.Output[:4000] + "\n... (truncated)"
+	}
 	return result
 }
 
-// ListFiles lists files matching a glob in the workspace.
+// ListFiles lists all source files in a directory recursively.
 type ListFiles struct {
 	WorkDir string
 }
 
-func (t *ListFiles) Name() string        { return "list_files" }
-func (t *ListFiles) Description() string { return "List files matching a glob pattern in the workspace" }
+func (t *ListFiles) Name() string { return "list_files" }
+func (t *ListFiles) Description() string {
+	return "List all source files in a directory recursively (e.g. path='agent' lists agent/*.go)"
+}
 func (t *ListFiles) Parameters() map[string]string {
-	return map[string]string{"pattern": "Glob pattern (e.g. **/*.go, src/*.js)"}
+	return map[string]string{"path": "Directory to list (e.g. 'agent', 'cmd/morpho'). Defaults to workspace root."}
 }
 func (t *ListFiles) Execute(args map[string]string) Result {
-	pattern := args["pattern"]
-	if pattern == "" {
-		pattern = "*"
+	dir := t.WorkDir
+	if p := args["path"]; p != "" {
+		dir = filepath.Join(t.WorkDir, filepath.Clean(p))
 	}
-	matches, err := filepath.Glob(filepath.Join(t.WorkDir, pattern))
-	if err != nil {
-		return Result{Err: err}
+	if !strings.HasPrefix(dir, t.WorkDir) {
+		return Result{Err: fmt.Errorf("path escapes workspace")}
 	}
-	var rel []string
-	for _, m := range matches {
-		r, _ := filepath.Rel(t.WorkDir, m)
-		rel = append(rel, r)
-	}
-	return Result{Output: strings.Join(rel, "\n")}
+	return listDir(dir, t.WorkDir)
 }
 
 // DefaultRegistry creates a registry with all built-in tools for a workspace.

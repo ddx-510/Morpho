@@ -3,10 +3,13 @@ package agent
 import (
 	"fmt"
 	"math"
+	"time"
 
 	"github.com/ddx-510/Morpho/field"
 	"github.com/ddx-510/Morpho/llm"
+	"github.com/ddx-510/Morpho/memory"
 	"github.com/ddx-510/Morpho/morphogen"
+	"github.com/ddx-510/Morpho/tool"
 )
 
 // Role is the specialized function an agent differentiates into.
@@ -30,21 +33,35 @@ const (
 	Apoptotic
 )
 
+// roleToolMap maps roles to the tool names they prefer.
+var roleToolMap = map[Role][]string{
+	BugHunter:       {"grep", "read_file", "shell"},
+	TestWriter:      {"read_file", "shell", "patch_file"},
+	SecurityAuditor: {"grep", "read_file", "list_files"},
+	Refactorer:      {"read_file", "patch_file", "grep"},
+	Documenter:      {"read_file", "list_files", "grep"},
+	Optimizer:       {"read_file", "grep", "shell"},
+}
+
 // Agent is a morphogenetic agent that reads gradients and specializes.
 type Agent struct {
-	ID       string
-	Role     Role
-	State    State
-	PointID  string  // current location in the field
-	Energy   float64 // depletes over time; triggers apoptosis at 0
+	ID        string
+	Role      Role
+	State     State
+	PointID   string  // current location in the field
+	Energy    float64 // depletes over time; triggers apoptosis at 0
 	IdleTicks int
-	WorkLog  []string
+	WorkLog   []string
 
-	provider llm.Provider
+	provider  llm.Provider
+	tools     *tool.Registry
+	ShortMem  *memory.ShortTerm
+	longMem   *memory.LongTerm
+	tick      int
 }
 
 // New creates an undifferentiated agent at the given point.
-func New(id string, pointID string, provider llm.Provider) *Agent {
+func New(id string, pointID string, provider llm.Provider, tools *tool.Registry, longMem *memory.LongTerm, stmCapacity int) *Agent {
 	return &Agent{
 		ID:       id,
 		Role:     Undifferentiated,
@@ -52,17 +69,25 @@ func New(id string, pointID string, provider llm.Provider) *Agent {
 		PointID:  pointID,
 		Energy:   1.0,
 		provider: provider,
+		tools:    tools,
+		ShortMem: memory.NewShortTerm(stmCapacity),
+		longMem:  longMem,
 	}
+}
+
+// SetTick updates the agent's current tick (set by engine each step).
+func (a *Agent) SetTick(tick int) {
+	a.tick = tick
 }
 
 // roleSignalMap maps each signal to the role that responds to it.
 var roleSignalMap = map[field.Signal]Role{
-	field.BugDensity:  BugHunter,
+	field.BugDensity:   BugHunter,
 	field.TestCoverage: TestWriter,
-	field.Security:    SecurityAuditor,
-	field.Complexity:  Refactorer,
-	field.DocDebt:     Documenter,
-	field.Performance: Optimizer,
+	field.Security:     SecurityAuditor,
+	field.Complexity:   Refactorer,
+	field.DocDebt:      Documenter,
+	field.Performance:  Optimizer,
 }
 
 // Differentiate reads the local gradient and specializes into the role
@@ -87,16 +112,38 @@ func (a *Agent) Differentiate(f *field.GradientField) {
 	}
 
 	if bestVal < 0.1 {
-		return // no strong signal
+		return
 	}
 
 	if role, ok := roleSignalMap[bestSig]; ok {
 		a.Role = role
+		a.remember("observation", fmt.Sprintf("differentiated into %s based on %s=%.2f at %s", role, bestSig, bestVal, a.PointID))
 	}
 }
 
+// roleTools returns the LLM tool specs this agent's role can use.
+func (a *Agent) roleTools() []llm.ToolSpec {
+	if a.tools == nil {
+		return nil
+	}
+	preferred, ok := roleToolMap[a.Role]
+	if !ok {
+		return a.tools.ToLLMSpecs()
+	}
+	var specs []llm.ToolSpec
+	for _, name := range preferred {
+		if t, ok := a.tools.Get(name); ok {
+			specs = append(specs, llm.ToolSpec{
+				Name:        t.Name(),
+				Description: t.Description(),
+				Parameters:  t.Parameters(),
+			})
+		}
+	}
+	return specs
+}
+
 // Work performs one tick of work based on the agent's role.
-// Returns morphogen signals to emit and a work description.
 func (a *Agent) Work(f *field.GradientField, bus *morphogen.Bus) string {
 	if a.State != Alive || a.Role == Undifferentiated {
 		a.IdleTicks++
@@ -109,7 +156,6 @@ func (a *Agent) Work(f *field.GradientField, bus *morphogen.Bus) string {
 		return ""
 	}
 
-	// Find the signal this role cares about.
 	var targetSig field.Signal
 	for sig, role := range roleSignalMap {
 		if role == a.Role {
@@ -126,18 +172,46 @@ func (a *Agent) Work(f *field.GradientField, bus *morphogen.Bus) string {
 
 	a.IdleTicks = 0
 
-	// Consult the LLM.
-	prompt := fmt.Sprintf("Role: %s | Point: %s | Signal %s=%.2f — analyze and suggest fix.",
-		a.Role, a.PointID, targetSig, localVal)
+	// Build prompt with memory context.
+	memCtx := a.ShortMem.Summary()
+	prompt := fmt.Sprintf(
+		"Role: %s | Point: %s | Signal %s=%.2f\nWorking memory:\n%s\nAnalyze and suggest fix. Use available tools.",
+		a.Role, a.PointID, targetSig, localVal, memCtx)
+
 	resp := a.provider.Generate(llm.Request{
-		SystemPrompt: fmt.Sprintf("You are a %s agent in a morphogenetic system.", a.Role),
+		SystemPrompt: fmt.Sprintf("You are a %s agent in a morphogenetic system. You have tools available. Use them to investigate and fix issues.", a.Role),
 		UserPrompt:   prompt,
+		Tools:        a.roleTools(),
 	})
 
+	// Execute any tool calls the LLM requested.
+	var toolOutput string
+	if a.tools != nil && len(resp.ToolCalls) > 0 {
+		toolOutput = a.tools.ExecuteCalls(resp.ToolCalls)
+		a.remember("tool_result", toolOutput)
+	}
+
 	work := fmt.Sprintf("[%s@%s] %s → %s", a.ID, a.PointID, a.Role, resp.Content)
+	if toolOutput != "" {
+		work += fmt.Sprintf(" | tools: %s", toolOutput)
+	}
 	a.WorkLog = append(a.WorkLog, work)
 
-	// Emit PRESENCE to suppress local signal (we're handling it).
+	// Store findings in memory.
+	a.remember("finding", resp.Content)
+
+	// Promote significant findings to long-term memory.
+	if localVal > 0.5 && a.longMem != nil {
+		a.longMem.Store(memory.Entry{
+			Tick:      a.tick,
+			Timestamp: time.Now(),
+			AgentID:   a.ID,
+			Category:  "finding",
+			Content:   fmt.Sprintf("[%s@%s] %s (signal=%.2f)", a.Role, a.PointID, resp.Content, localVal),
+		})
+	}
+
+	// Emit PRESENCE.
 	bus.Emit(morphogen.Signal{
 		Kind:    morphogen.PRESENCE,
 		Source:  a.ID,
@@ -146,10 +220,8 @@ func (a *Agent) Work(f *field.GradientField, bus *morphogen.Bus) string {
 		Value:   localVal * 0.3,
 	})
 
-	// Consume energy proportional to work.
 	a.Energy -= 0.1
 
-	// If signal is very high, emit ALARM to attract more agents.
 	if localVal > 0.8 {
 		bus.Emit(morphogen.Signal{
 			Kind:    morphogen.ALARM,
@@ -160,10 +232,20 @@ func (a *Agent) Work(f *field.GradientField, bus *morphogen.Bus) string {
 		})
 	}
 
-	// Reduce the signal we worked on.
 	f.AddSignal(a.PointID, targetSig, -localVal*0.2)
 
 	return work
+}
+
+// remember stores an observation in short-term memory.
+func (a *Agent) remember(category, content string) {
+	a.ShortMem.Add(memory.Entry{
+		Tick:      a.tick,
+		Timestamp: time.Now(),
+		AgentID:   a.ID,
+		Category:  category,
+		Content:   content,
+	})
 }
 
 // CheckApoptosis determines if this agent should die.
@@ -172,19 +254,16 @@ func (a *Agent) CheckApoptosis(f *field.GradientField) {
 		return
 	}
 
-	// Die if energy depleted.
 	if a.Energy <= 0 {
 		a.State = Apoptotic
 		return
 	}
 
-	// Die if idle too long.
 	if a.IdleTicks >= 3 {
 		a.State = Apoptotic
 		return
 	}
 
-	// Die if local gradients are fully depleted.
 	pt, ok := f.Point(a.PointID)
 	if !ok {
 		a.State = Apoptotic
@@ -205,6 +284,6 @@ func (a *Agent) String() string {
 	if a.State == Apoptotic {
 		state = "dead"
 	}
-	return fmt.Sprintf("Agent{%s role=%s point=%s energy=%.2f state=%s idle=%d}",
-		a.ID, a.Role, a.PointID, a.Energy, state, a.IdleTicks)
+	return fmt.Sprintf("Agent{%s role=%s point=%s energy=%.2f state=%s idle=%d mem=%d}",
+		a.ID, a.Role, a.PointID, a.Energy, state, a.IdleTicks, len(a.ShortMem.All()))
 }

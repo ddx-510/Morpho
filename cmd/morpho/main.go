@@ -1,16 +1,50 @@
 package main
 
 import (
+	"flag"
 	"fmt"
+	"log"
+	"os"
 
+	"github.com/ddx-510/Morpho/config"
 	"github.com/ddx-510/Morpho/engine"
 	"github.com/ddx-510/Morpho/field"
-	"github.com/ddx-510/Morpho/llm"
+	"github.com/ddx-510/Morpho/memory"
+	"github.com/ddx-510/Morpho/tool"
 )
 
 func main() {
-	fmt.Println("Morphogenetic Agent Architecture — Demo")
-	fmt.Println("Simulating analysis of a web app with known issues...\n")
+	configPath := flag.String("config", "morpho.json", "Path to config file")
+	workDir := flag.String("workdir", ".", "Workspace directory for agent tools")
+	flag.Parse()
+
+	fmt.Println("Morphogenetic Agent Architecture")
+	fmt.Println("================================")
+
+	// Load configuration.
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		log.Fatalf("config: %v", err)
+	}
+
+	// Build LLM provider from config.
+	provider, err := cfg.BuildProvider()
+	if err != nil {
+		log.Fatalf("provider: %v", err)
+	}
+	fmt.Printf("Provider: %s\n", provider.Name())
+
+	// Initialize tools.
+	absWorkDir := *workDir
+	if absWorkDir == "." {
+		absWorkDir, _ = os.Getwd()
+	}
+	tools := tool.DefaultRegistry(absWorkDir)
+	fmt.Printf("Tools: %d registered (read_file, grep, patch_file, shell, list_files)\n", len(tools.All()))
+
+	// Initialize long-term memory.
+	longMem := memory.NewLongTerm(cfg.Memory.LongTermPath)
+	fmt.Printf("Memory: long-term at %s (%d prior entries)\n", cfg.Memory.LongTermPath, longMem.Count())
 
 	// Create the gradient field representing code regions.
 	f := field.New()
@@ -59,12 +93,16 @@ func main() {
 		},
 	})
 
-	// Configure and run the engine with the demo provider.
-	provider := &llm.DemoProvider{}
-	cfg := engine.DefaultConfig(provider)
-	cfg.MaxTicks = 8
-	cfg.SpawnPerTick = 3
+	// Build engine config.
+	engCfg := engine.Config{
+		MaxTicks:          cfg.Engine.MaxTicks,
+		DecayRate:         cfg.Engine.DecayRate,
+		DiffusionRate:     cfg.Engine.DiffusionRate,
+		SpawnPerTick:      cfg.Engine.SpawnPerTick,
+		ShortTermCapacity: cfg.Memory.ShortTermCapacity,
+		Provider:          provider,
+	}
 
-	eng := engine.New(f, cfg)
+	eng := engine.New(f, engCfg, tools, longMem)
 	eng.Run()
 }

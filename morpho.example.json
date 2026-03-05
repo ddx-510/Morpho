@@ -1,0 +1,46 @@
+{
+  "_comment": "Copy to morpho.json and fill in your provider details",
+
+  "provider": {
+    "_type_options": "demo | openai | claude | gemini | openrouter",
+    "type": "openai",
+    "api_key": "$OPENAI_API_KEY",
+    "model": "gpt-4o",
+    "base_url": ""
+  },
+
+  "_provider_examples": {
+    "openai": {
+      "type": "openai",
+      "api_key": "$OPENAI_API_KEY",
+      "model": "gpt-4o"
+    },
+    "claude": {
+      "type": "claude",
+      "api_key": "$ANTHROPIC_API_KEY",
+      "model": "claude-sonnet-4-20250514"
+    },
+    "gemini": {
+      "type": "gemini",
+      "api_key": "$GEMINI_API_KEY",
+      "model": "gemini-2.0-flash"
+    },
+    "openrouter": {
+      "type": "openrouter",
+      "api_key": "$OPENROUTER_API_KEY",
+      "model": "anthropic/claude-sonnet-4-20250514"
+    }
+  },
+
+  "engine": {
+    "max_ticks": 10,
+    "decay_rate": 0.05,
+    "diffusion_rate": 0.3,
+    "spawn_per_tick": 2
+  },
+
+  "memory": {
+    "short_term_capacity": 20,
+    "long_term_path": ".morpho_memory.json"
+  }
+}

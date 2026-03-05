@@ -4,3 +4,5 @@
 /bin/
 /vendor/
 .DS_Store
+.morpho_memory.json
+morpho.json

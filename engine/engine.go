@@ -6,27 +6,31 @@ import (
 	"github.com/ddx-510/Morpho/agent"
 	"github.com/ddx-510/Morpho/field"
 	"github.com/ddx-510/Morpho/llm"
+	"github.com/ddx-510/Morpho/memory"
 	"github.com/ddx-510/Morpho/morphogen"
 	"github.com/ddx-510/Morpho/tissue"
+	"github.com/ddx-510/Morpho/tool"
 )
 
 // Config holds engine parameters.
 type Config struct {
-	MaxTicks      int
-	DecayRate     float64
-	DiffusionRate float64
-	SpawnPerTick  int
-	Provider      llm.Provider
+	MaxTicks          int
+	DecayRate         float64
+	DiffusionRate     float64
+	SpawnPerTick      int
+	ShortTermCapacity int
+	Provider          llm.Provider
 }
 
 // DefaultConfig returns sensible defaults.
 func DefaultConfig(provider llm.Provider) Config {
 	return Config{
-		MaxTicks:      10,
-		DecayRate:     0.05,
-		DiffusionRate: 0.3,
-		SpawnPerTick:  2,
-		Provider:      provider,
+		MaxTicks:          10,
+		DecayRate:         0.05,
+		DiffusionRate:     0.3,
+		SpawnPerTick:      2,
+		ShortTermCapacity: 20,
+		Provider:          provider,
 	}
 }
 
@@ -37,6 +41,8 @@ type Engine struct {
 	Agents   []*agent.Agent
 	Detector *tissue.Detector
 	Config   Config
+	Tools    *tool.Registry
+	LongMem  *memory.LongTerm
 
 	tick    int
 	agentID int
@@ -44,12 +50,14 @@ type Engine struct {
 }
 
 // New creates a new engine.
-func New(f *field.GradientField, cfg Config) *Engine {
+func New(f *field.GradientField, cfg Config, tools *tool.Registry, longMem *memory.LongTerm) *Engine {
 	return &Engine{
 		Field:    f,
 		Bus:      morphogen.NewBus(),
 		Detector: tissue.NewDetector(),
 		Config:   cfg,
+		Tools:    tools,
+		LongMem:  longMem,
 		log:      func(s string) { fmt.Println(s) },
 	}
 }
@@ -61,10 +69,11 @@ func (e *Engine) SetLogger(fn func(string)) {
 
 // Run executes the full simulation loop.
 func (e *Engine) Run() {
-	e.log(fmt.Sprintf("=== Morphogenetic Engine Start (provider: %s) ===\n", e.Config.Provider.Name()))
+	e.log(fmt.Sprintf("=== Morphogenetic Engine Start (provider: %s, tools: %d, memories: %d) ===",
+		e.Config.Provider.Name(), len(e.Tools.All()), e.LongMem.Count()))
 
 	for e.tick = 1; e.tick <= e.Config.MaxTicks; e.tick++ {
-		e.log(fmt.Sprintf("--- Tick %d ---", e.tick))
+		e.log(fmt.Sprintf("\n--- Tick %d ---", e.tick))
 		e.stepSpawn()
 		e.stepDifferentiate()
 		e.stepWork()
@@ -77,6 +86,7 @@ func (e *Engine) Run() {
 
 	e.log("\n=== Simulation Complete ===")
 	e.logSummary()
+	e.logMemorySummary()
 }
 
 func (e *Engine) stepSpawn() {
@@ -88,7 +98,8 @@ func (e *Engine) stepSpawn() {
 		pointID := points[e.agentID%len(points)]
 		e.agentID++
 		id := fmt.Sprintf("a%d", e.agentID)
-		a := agent.New(id, pointID, e.Config.Provider)
+		a := agent.New(id, pointID, e.Config.Provider, e.Tools, e.LongMem, e.Config.ShortTermCapacity)
+		a.SetTick(e.tick)
 		e.Agents = append(e.Agents, a)
 		e.log(fmt.Sprintf("  spawn %s at %s", id, pointID))
 	}
@@ -96,10 +107,11 @@ func (e *Engine) stepSpawn() {
 
 func (e *Engine) stepDifferentiate() {
 	for _, a := range e.Agents {
+		a.SetTick(e.tick)
 		prevRole := a.Role
 		a.Differentiate(e.Field)
 		if a.Role != prevRole {
-			e.log(fmt.Sprintf("  %s differentiated → %s", a.ID, a.Role))
+			e.log(fmt.Sprintf("  %s differentiated -> %s", a.ID, a.Role))
 		}
 	}
 }
@@ -117,7 +129,7 @@ func (e *Engine) stepApoptosis() {
 		prev := a.State
 		a.CheckApoptosis(e.Field)
 		if a.State == agent.Apoptotic && prev != agent.Apoptotic {
-			e.log(fmt.Sprintf("  apoptosis: %s (%s)", a.ID, a.Role))
+			e.log(fmt.Sprintf("  apoptosis: %s (%s) [%d memories]", a.ID, a.Role, len(a.ShortMem.All())))
 		}
 	}
 }
@@ -159,5 +171,12 @@ func (e *Engine) logSummary() {
 		for _, w := range a.WorkLog {
 			e.log(fmt.Sprintf("    %s", w))
 		}
+	}
+}
+
+func (e *Engine) logMemorySummary() {
+	e.log(fmt.Sprintf("\n--- Long-Term Memory (%d entries) ---", e.LongMem.Count()))
+	for _, entry := range e.LongMem.All() {
+		e.log(fmt.Sprintf("  %s", entry))
 	}
 }

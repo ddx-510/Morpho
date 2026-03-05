@@ -133,6 +133,7 @@ func (a *Agent) readRegionFiles() string {
 	}
 
 	var buf strings.Builder
+	const maxTotal = 24000 // cap total context to avoid overwhelming the LLM
 	for _, file := range strings.Split(listResult.Output, "\n") {
 		file = strings.TrimSpace(file)
 		if file == "" {
@@ -145,6 +146,10 @@ func (a *Agent) readRegionFiles() string {
 				content = content[:3000] + "\n... (truncated)"
 			}
 			fmt.Fprintf(&buf, "=== %s ===\n%s\n\n", file, content)
+			if buf.Len() > maxTotal {
+				buf.WriteString("... (remaining files omitted — context limit)\n")
+				break
+			}
 		}
 	}
 	return buf.String()

@@ -26,7 +26,7 @@ Source Code → Scan → Gradient Field → Spawn Agents → Differentiate → A
 ```
 morpho/
 ├── field/       # Gradient field with signal decay + diffusion
-├── morphogen/   # Stigmergic signal bus
+├── morphogen/   # Stigmergic signal bus (thread-safe)
 ├── agent/       # Agent lifecycle: differentiation, work, apoptosis
 ├── tissue/      # Cluster detection for co-located agents
 ├── engine/      # Tick-based simulation loop
@@ -36,8 +36,9 @@ morpho/
 ├── scan/        # Directory scanner that seeds gradient signals
 ├── config/      # JSON config with provider presets
 ├── cmd/
-│   ├── morpho/  # Interactive CLI entry point
-│   └── bench/   # Benchmark: single-agent vs morpho comparison
+│   ├── morpho/  # CLI with colored progress output
+│   ├── bench/   # Benchmark: single-agent vs morpho comparison
+│   └── viz/     # Web dashboard with real-time visualization
 ```
 
 ## Quick Start
@@ -64,11 +65,15 @@ cat > morpho.json << 'EOF'
 }
 EOF
 
-# Analyze a codebase
+# Analyze a codebase (with live progress)
 go run cmd/morpho/main.go /path/to/project
 
 # Run benchmark comparison
 go run cmd/bench/main.go /path/to/project
+
+# Launch web visualization dashboard
+go run cmd/viz/main.go /path/to/project
+# → Open http://localhost:8420 and click Start
 ```
 
 ## Supported Providers

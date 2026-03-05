@@ -21,7 +21,11 @@ func Dir(root string) (*field.GradientField, error) {
 		}
 		name := info.Name()
 		if info.IsDir() {
-			if name == ".git" || name == "node_modules" || name == "vendor" || name == "__pycache__" {
+			if name == ".git" || name == "node_modules" || name == "vendor" || name == "__pycache__" || name == "~" {
+				return filepath.SkipDir
+			}
+			// Skip hidden directories (but not root).
+			if strings.HasPrefix(name, ".") && path != root {
 				return filepath.SkipDir
 			}
 			return nil

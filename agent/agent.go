@@ -174,31 +174,57 @@ func (a *Agent) Work(f *field.GradientField, bus *morphogen.Bus) string {
 
 	// Build prompt with memory context.
 	memCtx := a.ShortMem.Summary()
-	prompt := fmt.Sprintf(
-		"Role: %s | Point: %s | Signal %s=%.2f\nWorking memory:\n%s\nAnalyze and suggest fix. Use available tools.",
-		a.Role, a.PointID, targetSig, localVal, memCtx)
 
+	systemPrompt := fmt.Sprintf(`You are a %s specialist analyzing the "%s" region of a codebase.
+Signal %s = %.2f (0=fine, 1=critical).
+
+INSTRUCTIONS:
+1. Use the tools to read actual source files in the "%s/" directory.
+2. Find SPECIFIC issues — cite file names, function names, and quote problematic code.
+3. Do NOT narrate what you plan to do. Just do it and report findings.
+4. Output a numbered list of concrete findings. Each must reference a real file.`, a.Role, a.PointID, targetSig, localVal, a.PointID)
+
+	prompt := fmt.Sprintf("Previous findings:\n%s\nFind issues now. Use tools, then report.", memCtx)
+
+	// Round 1: call LLM with tools.
 	resp := a.provider.Generate(llm.Request{
-		SystemPrompt: fmt.Sprintf("You are a %s agent in a morphogenetic system. You have tools available. Use them to investigate and fix issues.", a.Role),
+		SystemPrompt: systemPrompt,
 		UserPrompt:   prompt,
 		Tools:        a.roleTools(),
 	})
 
-	// Execute any tool calls the LLM requested.
+	if resp.Err != nil {
+		a.remember("error", resp.Err.Error())
+		a.IdleTicks++
+		return ""
+	}
+
+	// Execute tool calls and feed results back for a second round.
 	var toolOutput string
 	if a.tools != nil && len(resp.ToolCalls) > 0 {
 		toolOutput = a.tools.ExecuteCalls(resp.ToolCalls)
 		a.remember("tool_result", toolOutput)
+
+		// Round 2: feed tool results back to get actual analysis.
+		if toolOutput != "" {
+			followUp := a.provider.Generate(llm.Request{
+				SystemPrompt: systemPrompt,
+				UserPrompt: fmt.Sprintf("Tool results:\n%s\n\nBased on these results, list the specific issues you found. Each finding must cite a file and describe the actual problem.", toolOutput),
+			})
+			if followUp.Err == nil && followUp.Content != "" {
+				resp.Content = followUp.Content
+			}
+		}
 	}
 
-	work := fmt.Sprintf("[%s@%s] %s → %s", a.ID, a.PointID, a.Role, resp.Content)
-	if toolOutput != "" {
-		work += fmt.Sprintf(" | tools: %s", toolOutput)
+	content := resp.Content
+	if content == "" {
+		content = "(no output)"
 	}
+
+	work := fmt.Sprintf("[%s@%s] %s: %s", a.ID, a.PointID, a.Role, content)
 	a.WorkLog = append(a.WorkLog, work)
-
-	// Store findings in memory.
-	a.remember("finding", resp.Content)
+	a.remember("finding", content)
 
 	// Promote significant findings to long-term memory.
 	if localVal > 0.5 && a.longMem != nil {
@@ -207,7 +233,7 @@ func (a *Agent) Work(f *field.GradientField, bus *morphogen.Bus) string {
 			Timestamp: time.Now(),
 			AgentID:   a.ID,
 			Category:  "finding",
-			Content:   fmt.Sprintf("[%s@%s] %s (signal=%.2f)", a.Role, a.PointID, resp.Content, localVal),
+			Content:   fmt.Sprintf("[%s@%s] %s (signal=%.2f)", a.Role, a.PointID, content, localVal),
 		})
 	}
 

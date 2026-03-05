@@ -1,39 +1,26 @@
 {
-  "_comment": "Copy to morpho.json and fill in your provider details",
+  "_comment": "Copy to morpho.json and configure your provider",
 
   "provider": {
-    "_type_options": "demo | openai | claude | gemini | openrouter",
+    "_type_options": "openai | claude | gemini | openrouter | groq | together | deepseek | ollama",
     "type": "openai",
     "api_key": "$OPENAI_API_KEY",
-    "model": "gpt-4o",
-    "base_url": ""
+    "model": "gpt-4o-mini"
   },
 
   "_provider_examples": {
-    "openai": {
-      "type": "openai",
-      "api_key": "$OPENAI_API_KEY",
-      "model": "gpt-4o"
-    },
-    "claude": {
-      "type": "claude",
-      "api_key": "$ANTHROPIC_API_KEY",
-      "model": "claude-sonnet-4-20250514"
-    },
-    "gemini": {
-      "type": "gemini",
-      "api_key": "$GEMINI_API_KEY",
-      "model": "gemini-2.0-flash"
-    },
-    "openrouter": {
-      "type": "openrouter",
-      "api_key": "$OPENROUTER_API_KEY",
-      "model": "anthropic/claude-sonnet-4-20250514"
-    }
+    "openai":     { "type": "openai",     "api_key": "$OPENAI_API_KEY",     "model": "gpt-4o-mini" },
+    "claude":     { "type": "claude",     "api_key": "$ANTHROPIC_API_KEY",  "model": "claude-sonnet-4-20250514" },
+    "gemini":     { "type": "gemini",     "api_key": "$GEMINI_API_KEY",     "model": "gemini-2.0-flash" },
+    "openrouter": { "type": "openrouter", "api_key": "$OPENROUTER_API_KEY", "model": "openai/gpt-4o-mini" },
+    "groq":       { "type": "groq",       "api_key": "$GROQ_API_KEY",       "model": "llama-3.3-70b-versatile" },
+    "together":   { "type": "together",   "api_key": "$TOGETHER_API_KEY",   "model": "meta-llama/Llama-3.3-70B-Instruct-Turbo" },
+    "deepseek":   { "type": "deepseek",   "api_key": "$DEEPSEEK_API_KEY",   "model": "deepseek-chat" },
+    "ollama":     { "type": "ollama",     "api_key": "",                     "model": "llama3.2" }
   },
 
   "engine": {
-    "max_ticks": 10,
+    "max_ticks": 6,
     "decay_rate": 0.05,
     "diffusion_rate": 0.3,
     "spawn_per_tick": 2

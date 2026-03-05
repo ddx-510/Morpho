@@ -2,6 +2,8 @@ package engine
 
 import (
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/ddx-510/Morpho/agent"
 	"github.com/ddx-510/Morpho/field"
@@ -34,6 +36,18 @@ func DefaultConfig(provider llm.Provider) Config {
 	}
 }
 
+// RunResult captures what the engine produced for comparison.
+type RunResult struct {
+	Findings     []string          // all work log entries
+	ByRole       map[string]int    // count of findings per role
+	ByPoint      map[string]int    // count of findings per point
+	Tissues      []string          // tissue clusters detected
+	AgentsTotal  int
+	AgentsDied   int
+	LLMCalls     int
+	Duration     time.Duration
+}
+
 // Engine runs the tick-based morphogenetic simulation.
 type Engine struct {
 	Field    *field.GradientField
@@ -44,9 +58,11 @@ type Engine struct {
 	Tools    *tool.Registry
 	LongMem  *memory.LongTerm
 
-	tick    int
-	agentID int
-	log     func(string)
+	tick     int
+	agentID  int
+	llmCalls int
+	log      func(string)
+	result   RunResult
 }
 
 // New creates a new engine.
@@ -59,6 +75,10 @@ func New(f *field.GradientField, cfg Config, tools *tool.Registry, longMem *memo
 		Tools:    tools,
 		LongMem:  longMem,
 		log:      func(s string) { fmt.Println(s) },
+		result: RunResult{
+			ByRole:  make(map[string]int),
+			ByPoint: make(map[string]int),
+		},
 	}
 }
 
@@ -67,10 +87,24 @@ func (e *Engine) SetLogger(fn func(string)) {
 	e.log = fn
 }
 
-// Run executes the full simulation loop.
-func (e *Engine) Run() {
-	e.log(fmt.Sprintf("=== Morphogenetic Engine Start (provider: %s, tools: %d, memories: %d) ===",
-		e.Config.Provider.Name(), len(e.Tools.All()), e.LongMem.Count()))
+// Quiet disables logging.
+func (e *Engine) Quiet() {
+	e.log = func(string) {}
+}
+
+// Run executes the full simulation loop and returns results.
+func (e *Engine) Run() RunResult {
+	start := time.Now()
+	toolCount := 0
+	if e.Tools != nil {
+		toolCount = len(e.Tools.All())
+	}
+	memCount := 0
+	if e.LongMem != nil {
+		memCount = e.LongMem.Count()
+	}
+	e.log(fmt.Sprintf("=== Morphogenetic Engine (provider: %s, tools: %d, memories: %d) ===",
+		e.Config.Provider.Name(), toolCount, memCount))
 
 	for e.tick = 1; e.tick <= e.Config.MaxTicks; e.tick++ {
 		e.log(fmt.Sprintf("\n--- Tick %d ---", e.tick))
@@ -84,9 +118,17 @@ func (e *Engine) Run() {
 		e.logStatus()
 	}
 
-	e.log("\n=== Simulation Complete ===")
-	e.logSummary()
-	e.logMemorySummary()
+	e.result.Duration = time.Since(start)
+	e.result.AgentsTotal = len(e.Agents)
+	for _, a := range e.Agents {
+		if a.State == agent.Apoptotic {
+			e.result.AgentsDied++
+		}
+	}
+	e.result.LLMCalls = e.llmCalls
+
+	e.log("\n=== Complete ===")
+	return e.result
 }
 
 func (e *Engine) stepSpawn() {
@@ -111,7 +153,7 @@ func (e *Engine) stepDifferentiate() {
 		prevRole := a.Role
 		a.Differentiate(e.Field)
 		if a.Role != prevRole {
-			e.log(fmt.Sprintf("  %s differentiated -> %s", a.ID, a.Role))
+			e.log(fmt.Sprintf("  %s -> %s", a.ID, a.Role))
 		}
 	}
 }
@@ -119,7 +161,11 @@ func (e *Engine) stepDifferentiate() {
 func (e *Engine) stepWork() {
 	for _, a := range e.Agents {
 		if work := a.Work(e.Field, e.Bus); work != "" {
-			e.log(fmt.Sprintf("  work: %s", work))
+			e.llmCalls++
+			e.result.Findings = append(e.result.Findings, work)
+			e.result.ByRole[string(a.Role)]++
+			e.result.ByPoint[a.PointID]++
+			e.log(fmt.Sprintf("  %s", work))
 		}
 	}
 }
@@ -129,7 +175,7 @@ func (e *Engine) stepApoptosis() {
 		prev := a.State
 		a.CheckApoptosis(e.Field)
 		if a.State == agent.Apoptotic && prev != agent.Apoptotic {
-			e.log(fmt.Sprintf("  apoptosis: %s (%s) [%d memories]", a.ID, a.Role, len(a.ShortMem.All())))
+			e.log(fmt.Sprintf("  apoptosis: %s (%s)", a.ID, a.Role))
 		}
 	}
 }
@@ -137,14 +183,16 @@ func (e *Engine) stepApoptosis() {
 func (e *Engine) stepTissue() {
 	clusters := e.Detector.Detect(e.Agents)
 	for _, c := range clusters {
-		e.log(fmt.Sprintf("  tissue: %s", c))
+		desc := c.String()
+		e.result.Tissues = append(e.result.Tissues, desc)
+		e.log(fmt.Sprintf("  tissue: %s", desc))
 	}
 }
 
 func (e *Engine) stepMorphogens() {
 	applied := e.Bus.Flush(e.Field)
 	if len(applied) > 0 {
-		e.log(fmt.Sprintf("  morphogens flushed: %d signals", len(applied)))
+		e.log(fmt.Sprintf("  morphogens: %d", len(applied)))
 	}
 }
 
@@ -160,23 +208,45 @@ func (e *Engine) logStatus() {
 			alive++
 		}
 	}
-	e.log(fmt.Sprintf("  status: %d alive, %d total", alive, len(e.Agents)))
-	e.log("  field:\n" + e.Field.Snapshot())
+	e.log(fmt.Sprintf("  alive: %d/%d", alive, len(e.Agents)))
 }
 
-func (e *Engine) logSummary() {
-	e.log("\n--- Agent Summary ---")
-	for _, a := range e.Agents {
-		e.log(fmt.Sprintf("  %s", a))
-		for _, w := range a.WorkLog {
-			e.log(fmt.Sprintf("    %s", w))
+// PrintReport outputs a structured summary of findings.
+func PrintReport(r RunResult) string {
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Findings: %d | LLM calls: %d | Agents: %d spawned, %d died | Time: %s\n",
+		len(r.Findings), r.LLMCalls, r.AgentsTotal, r.AgentsDied, r.Duration.Round(time.Millisecond)))
+
+	sb.WriteString("\nBy role:\n")
+	for role, count := range r.ByRole {
+		sb.WriteString(fmt.Sprintf("  %-20s %d\n", role, count))
+	}
+	sb.WriteString("\nBy region:\n")
+	for point, count := range r.ByPoint {
+		sb.WriteString(fmt.Sprintf("  %-20s %d\n", point, count))
+	}
+
+	if len(r.Tissues) > 0 {
+		sb.WriteString("\nTissue clusters formed:\n")
+		seen := map[string]bool{}
+		for _, t := range r.Tissues {
+			if !seen[t] {
+				sb.WriteString(fmt.Sprintf("  %s\n", t))
+				seen[t] = true
+			}
 		}
 	}
+
+	sb.WriteString("\nFindings:\n")
+	for i, f := range r.Findings {
+		sb.WriteString(fmt.Sprintf("  %d. %s\n", i+1, truncate(f, 150)))
+	}
+	return sb.String()
 }
 
-func (e *Engine) logMemorySummary() {
-	e.log(fmt.Sprintf("\n--- Long-Term Memory (%d entries) ---", e.LongMem.Count()))
-	for _, entry := range e.LongMem.All() {
-		e.log(fmt.Sprintf("  %s", entry))
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
 	}
+	return s[:n] + "..."
 }

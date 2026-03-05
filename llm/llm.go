@@ -1,6 +1,5 @@
 package llm
 
-import "fmt"
 
 // Request is a prompt sent to an LLM provider.
 type Request struct {
@@ -35,34 +34,3 @@ type Provider interface {
 	Name() string
 }
 
-// DemoProvider is a deterministic provider for testing and demos.
-type DemoProvider struct{}
-
-func (d *DemoProvider) Name() string { return "DemoProvider" }
-
-func (d *DemoProvider) Generate(req Request) Response {
-	// If tools are available, simulate a tool call for the first tool.
-	if len(req.Tools) > 0 {
-		args := make(map[string]string)
-		for param := range req.Tools[0].Parameters {
-			args[param] = fmt.Sprintf("demo_%s_value", param)
-		}
-		return Response{
-			Content: fmt.Sprintf("[demo] Analyzed: %s", truncate(req.UserPrompt, 80)),
-			ToolCalls: []ToolCall{{
-				Name: req.Tools[0].Name,
-				Args: args,
-			}},
-		}
-	}
-	return Response{
-		Content: fmt.Sprintf("[demo] Analyzed: %s", truncate(req.UserPrompt, 80)),
-	}
-}
-
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "..."
-}

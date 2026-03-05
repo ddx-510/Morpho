@@ -10,17 +10,17 @@ import (
 
 // Config is the top-level configuration loaded from morpho.json.
 type Config struct {
-	Provider  ProviderConfig `json:"provider"`
-	Engine    EngineConfig   `json:"engine"`
-	Memory    MemoryConfig   `json:"memory"`
+	Provider ProviderConfig `json:"provider"`
+	Engine   EngineConfig   `json:"engine"`
+	Memory   MemoryConfig   `json:"memory"`
 }
 
 // ProviderConfig selects and configures the LLM provider.
 type ProviderConfig struct {
-	Type    string `json:"type"`    // "openai", "claude", "gemini", "openrouter", "demo"
-	APIKey  string `json:"api_key"` // can also use env var references like "$OPENAI_API_KEY"
+	Type    string `json:"type"`              // "openai", "claude", "gemini", "openrouter", "demo"
+	APIKey  string `json:"api_key"`           // can use env var references like "$OPENAI_API_KEY"
 	Model   string `json:"model"`
-	BaseURL string `json:"base_url,omitempty"`
+	BaseURL string `json:"base_url,omitempty"` // override default endpoint
 }
 
 // EngineConfig holds simulation parameters.
@@ -40,7 +40,7 @@ type MemoryConfig struct {
 // Load reads a config file from disk. Falls back to defaults if the file doesn't exist.
 func Load(path string) (*Config, error) {
 	cfg := &Config{
-		Provider: ProviderConfig{Type: "demo"},
+		Provider: ProviderConfig{},
 		Engine: EngineConfig{
 			MaxTicks:      10,
 			DecayRate:     0.05,
@@ -65,13 +65,10 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
 
-	// Resolve env var references in API key.
 	cfg.Provider.APIKey = resolveEnv(cfg.Provider.APIKey)
-
 	return cfg, nil
 }
 
-// resolveEnv replaces "$VAR_NAME" with the environment variable value.
 func resolveEnv(s string) string {
 	if len(s) > 0 && s[0] == '$' {
 		if val := os.Getenv(s[1:]); val != "" {
@@ -81,62 +78,63 @@ func resolveEnv(s string) string {
 	return s
 }
 
+// providerPreset holds the defaults for a known provider type.
+type providerPreset struct {
+	Label   string
+	Format  llm.APIFormat
+	BaseURL string
+	Model   string
+}
+
+var presets = map[string]providerPreset{
+	"openai":     {Label: "OpenAI", Format: llm.FormatOpenAI, BaseURL: "https://api.openai.com/v1", Model: "gpt-4o"},
+	"claude":     {Label: "Claude", Format: llm.FormatAnthropic, BaseURL: "https://api.anthropic.com", Model: "claude-sonnet-4-20250514"},
+	"gemini":     {Label: "Gemini", Format: llm.FormatGemini, BaseURL: "https://generativelanguage.googleapis.com", Model: "gemini-2.0-flash"},
+	"openrouter": {Label: "OpenRouter", Format: llm.FormatOpenAI, BaseURL: "https://openrouter.ai/api/v1", Model: "anthropic/claude-sonnet-4-20250514"},
+	"groq":       {Label: "Groq", Format: llm.FormatOpenAI, BaseURL: "https://api.groq.com/openai/v1", Model: "llama-3.3-70b-versatile"},
+	"together":   {Label: "Together", Format: llm.FormatOpenAI, BaseURL: "https://api.together.xyz/v1", Model: "meta-llama/Llama-3.3-70B-Instruct-Turbo"},
+	"deepseek":   {Label: "DeepSeek", Format: llm.FormatOpenAI, BaseURL: "https://api.deepseek.com/v1", Model: "deepseek-chat"},
+	"ollama":     {Label: "Ollama", Format: llm.FormatOpenAI, BaseURL: "http://localhost:11434/v1", Model: "llama3.2"},
+}
+
 // BuildProvider creates an LLM provider from the config.
 func (c *Config) BuildProvider() (llm.Provider, error) {
-	switch c.Provider.Type {
-	case "demo", "":
-		return &llm.DemoProvider{}, nil
-	case "openai":
-		if c.Provider.APIKey == "" {
-			return nil, fmt.Errorf("openai provider requires api_key (or set $OPENAI_API_KEY)")
-		}
-		model := c.Provider.Model
-		if model == "" {
-			model = "gpt-4o"
-		}
-		return &llm.OpenAIProvider{
-			APIKey:  c.Provider.APIKey,
-			Model:   model,
-			BaseURL: c.Provider.BaseURL,
-		}, nil
-	case "claude":
-		if c.Provider.APIKey == "" {
-			return nil, fmt.Errorf("claude provider requires api_key (or set $ANTHROPIC_API_KEY)")
-		}
-		model := c.Provider.Model
-		if model == "" {
-			model = "claude-sonnet-4-20250514"
-		}
-		return &llm.ClaudeProvider{
-			APIKey:  c.Provider.APIKey,
-			Model:   model,
-			BaseURL: c.Provider.BaseURL,
-		}, nil
-	case "gemini":
-		if c.Provider.APIKey == "" {
-			return nil, fmt.Errorf("gemini provider requires api_key (or set $GEMINI_API_KEY)")
-		}
-		model := c.Provider.Model
-		if model == "" {
-			model = "gemini-2.0-flash"
-		}
-		return &llm.GeminiProvider{
-			APIKey: c.Provider.APIKey,
-			Model:  model,
-		}, nil
-	case "openrouter":
-		if c.Provider.APIKey == "" {
-			return nil, fmt.Errorf("openrouter provider requires api_key (or set $OPENROUTER_API_KEY)")
-		}
-		model := c.Provider.Model
-		if model == "" {
-			model = "anthropic/claude-sonnet-4-20250514"
-		}
-		return &llm.OpenRouterProvider{
-			APIKey: c.Provider.APIKey,
-			Model:  model,
-		}, nil
-	default:
-		return nil, fmt.Errorf("unknown provider type: %q", c.Provider.Type)
+	if c.Provider.Type == "" {
+		return nil, fmt.Errorf("provider type is required in config (openai, claude, gemini, openrouter, groq, together, deepseek, ollama)")
 	}
+
+	preset, known := presets[c.Provider.Type]
+	if !known {
+		// Unknown type: assume OpenAI-compatible with base_url required.
+		if c.Provider.BaseURL == "" {
+			return nil, fmt.Errorf("unknown provider %q: set base_url for custom OpenAI-compatible endpoints", c.Provider.Type)
+		}
+		preset = providerPreset{
+			Label:   c.Provider.Type,
+			Format:  llm.FormatOpenAI,
+			BaseURL: c.Provider.BaseURL,
+			Model:   "default",
+		}
+	}
+
+	if c.Provider.APIKey == "" && c.Provider.Type != "ollama" {
+		return nil, fmt.Errorf("%s provider requires api_key", preset.Label)
+	}
+
+	model := c.Provider.Model
+	if model == "" {
+		model = preset.Model
+	}
+	baseURL := c.Provider.BaseURL
+	if baseURL == "" {
+		baseURL = preset.BaseURL
+	}
+
+	return &llm.HTTPProvider{
+		Label:   preset.Label,
+		APIKey:  c.Provider.APIKey,
+		Model:   model,
+		BaseURL: baseURL,
+		Format:  preset.Format,
+	}, nil
 }

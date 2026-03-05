@@ -96,6 +96,9 @@ func (m *LongTerm) load() {
 
 // Save persists memory to disk.
 func (m *LongTerm) Save() error {
+	if m.path == "" {
+		return nil
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	data, err := json.MarshalIndent(m.entries, "", "  ")

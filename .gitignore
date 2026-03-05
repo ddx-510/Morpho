@@ -1,0 +1,6 @@
+*.exe
+*.test
+*.out
+/bin/
+/vendor/
+.DS_Store

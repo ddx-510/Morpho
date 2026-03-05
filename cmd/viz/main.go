@@ -10,12 +10,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ddx-510/Morpho/agent"
 	"github.com/ddx-510/Morpho/config"
+	"github.com/ddx-510/Morpho/domain"
 	"github.com/ddx-510/Morpho/engine"
 	"github.com/ddx-510/Morpho/llm"
 	"github.com/ddx-510/Morpho/memory"
-	"github.com/ddx-510/Morpho/scan"
-	"github.com/ddx-510/Morpho/tool"
 )
 
 // sseHub manages Server-Sent Event connections.
@@ -83,6 +83,7 @@ var (
 func main() {
 	configPath := flag.String("config", "morpho.json", "Path to config file")
 	port := flag.String("port", "8420", "HTTP port")
+	domainName := flag.String("domain", "code_review", "Domain: code_review, research, writing_review, data_analysis, or free-text task")
 	flag.Parse()
 
 	target := "."
@@ -111,6 +112,18 @@ func main() {
 		log.Fatalf("provider: %v", err)
 	}
 
+	// Resolve domain.
+	var dom *domain.Domain
+	if d, ok := domain.Get(*domainName); ok {
+		dom = d
+	} else {
+		d, err := domain.Auto(provider, *domainName, target)
+		if err != nil {
+			log.Fatalf("auto domain: %v", err)
+		}
+		dom = d
+	}
+
 	var running sync.Mutex
 
 	// HTTP routes
@@ -124,7 +137,7 @@ func main() {
 		}
 		go func() {
 			defer running.Unlock()
-			runMorpho(target, cfg, provider)
+			runMorpho(target, cfg, provider, dom)
 		}()
 		json.NewEncoder(w).Encode(map[string]string{"status": "started"})
 	})
@@ -137,18 +150,18 @@ func main() {
 	log.Fatal(http.ListenAndServe(addr, nil))
 }
 
-func runMorpho(target string, cfg *config.Config, provider llm.Provider) {
+func runMorpho(target string, cfg *config.Config, provider llm.Provider, dom *domain.Domain) {
 	startTime = time.Now()
 
-	f, err := scan.Dir(target)
+	f, err := dom.Seeder(target)
 	if err != nil {
-		emit(vizEvent{Type: "complete", Detail: "scan error: " + err.Error()})
+		emit(vizEvent{Type: "complete", Detail: "seed error: " + err.Error()})
 		return
 	}
 
 	regions := f.Points()
 	if len(regions) == 0 {
-		emit(vizEvent{Type: "complete", Detail: "no code found"})
+		emit(vizEvent{Type: "complete", Detail: "no content found"})
 		return
 	}
 
@@ -168,7 +181,15 @@ func runMorpho(target string, cfg *config.Config, provider llm.Provider) {
 	}
 	emit(vizEvent{Type: "init", Regions: regions, Field: fieldData})
 
-	tools := tool.DefaultRegistry(target)
+	// Build role mapping from domain.
+	roles := agent.NewRoleMapping()
+	for _, r := range dom.Roles {
+		roles.SignalToRole[r.Signal] = r.Name
+		roles.RoleToSignal[r.Name] = r.Signal
+		roles.RolePrompts[r.Name] = r.Prompt
+	}
+
+	tools := dom.ToolBuilder(target)
 	longMem := memory.NewLongTerm("")
 
 	engCfg := engine.Config{
@@ -181,6 +202,7 @@ func runMorpho(target string, cfg *config.Config, provider llm.Provider) {
 	}
 
 	eng := engine.New(f, engCfg, tools, longMem)
+	eng.SetRoles(roles)
 	eng.Quiet()
 
 	eng.SetProgress(func(ev engine.ProgressEvent) {

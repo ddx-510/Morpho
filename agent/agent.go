@@ -14,17 +14,11 @@ import (
 )
 
 // Role is the specialized function an agent differentiates into.
-type Role string
+// In a domain-agnostic system, roles are strings defined by the domain.
+type Role = string
 
-const (
-	Undifferentiated Role = "undifferentiated"
-	BugHunter        Role = "bug_hunter"
-	TestWriter       Role = "test_writer"
-	SecurityAuditor  Role = "security_auditor"
-	Refactorer       Role = "refactorer"
-	Documenter       Role = "documenter"
-	Optimizer        Role = "optimizer"
-)
+// Undifferentiated is the initial state before differentiation.
+const Undifferentiated Role = "undifferentiated"
 
 // State tracks the agent lifecycle.
 type State int
@@ -33,6 +27,23 @@ const (
 	Alive State = iota
 	Apoptotic
 )
+
+// RoleMapping defines how signals map to roles and their prompts.
+// This replaces the old hardcoded roleSignalMap.
+type RoleMapping struct {
+	SignalToRole map[field.Signal]string // signal -> role name
+	RoleToSignal map[string]field.Signal // role name -> signal
+	RolePrompts  map[string]string       // role name -> prompt template
+}
+
+// NewRoleMapping creates an empty role mapping.
+func NewRoleMapping() *RoleMapping {
+	return &RoleMapping{
+		SignalToRole: make(map[field.Signal]string),
+		RoleToSignal: make(map[string]field.Signal),
+		RolePrompts:  make(map[string]string),
+	}
+}
 
 // Agent is a morphogenetic agent that reads gradients and specializes.
 type Agent struct {
@@ -44,15 +55,16 @@ type Agent struct {
 	IdleTicks int
 	WorkLog   []string
 
-	provider  llm.Provider
-	tools     *tool.Registry
-	ShortMem  *memory.ShortTerm
-	longMem   *memory.LongTerm
-	tick      int
+	provider llm.Provider
+	tools    *tool.Registry
+	ShortMem *memory.ShortTerm
+	longMem  *memory.LongTerm
+	roles    *RoleMapping
+	tick     int
 }
 
 // New creates an undifferentiated agent at the given point.
-func New(id string, pointID string, provider llm.Provider, tools *tool.Registry, longMem *memory.LongTerm, stmCapacity int) *Agent {
+func New(id string, pointID string, provider llm.Provider, tools *tool.Registry, longMem *memory.LongTerm, stmCapacity int, roles *RoleMapping) *Agent {
 	return &Agent{
 		ID:       id,
 		Role:     Undifferentiated,
@@ -63,22 +75,13 @@ func New(id string, pointID string, provider llm.Provider, tools *tool.Registry,
 		tools:    tools,
 		ShortMem: memory.NewShortTerm(stmCapacity),
 		longMem:  longMem,
+		roles:    roles,
 	}
 }
 
 // SetTick updates the agent's current tick (set by engine each step).
 func (a *Agent) SetTick(tick int) {
 	a.tick = tick
-}
-
-// roleSignalMap maps each signal to the role that responds to it.
-var roleSignalMap = map[field.Signal]Role{
-	field.BugDensity:   BugHunter,
-	field.TestCoverage: TestWriter,
-	field.Security:     SecurityAuditor,
-	field.Complexity:   Refactorer,
-	field.DocDebt:      Documenter,
-	field.Performance:  Optimizer,
 }
 
 // Differentiate reads the local gradient and specializes into the role
@@ -106,7 +109,7 @@ func (a *Agent) Differentiate(f *field.GradientField) {
 		return
 	}
 
-	if role, ok := roleSignalMap[bestSig]; ok {
+	if role, ok := a.roles.SignalToRole[bestSig]; ok {
 		a.Role = role
 		a.remember("observation", fmt.Sprintf("differentiated into %s based on %s=%.2f at %s", role, bestSig, bestVal, a.PointID))
 	}
@@ -133,7 +136,7 @@ func (a *Agent) readRegionFiles() string {
 	}
 
 	var buf strings.Builder
-	const maxTotal = 24000 // cap total context to avoid overwhelming the LLM
+	const maxTotal = 24000
 	for _, file := range strings.Split(listResult.Output, "\n") {
 		file = strings.TrimSpace(file)
 		if file == "" {
@@ -168,12 +171,10 @@ func (a *Agent) Work(f *field.GradientField, bus *morphogen.Bus) string {
 		return ""
 	}
 
-	var targetSig field.Signal
-	for sig, role := range roleSignalMap {
-		if role == a.Role {
-			targetSig = sig
-			break
-		}
+	targetSig, ok := a.roles.RoleToSignal[a.Role]
+	if !ok {
+		a.IdleTicks++
+		return ""
 	}
 
 	localVal := pt.Signals[targetSig]
@@ -184,31 +185,40 @@ func (a *Agent) Work(f *field.GradientField, bus *morphogen.Bus) string {
 
 	a.IdleTicks = 0
 
-	// Pre-read all source files in this region — inject code directly into prompt.
+	// Pre-read all source files in this region.
 	codeContext := a.readRegionFiles()
 	if codeContext == "" {
-		codeContext = "(no source files found in this region)"
+		codeContext = "(no content found in this region)"
 	}
 
 	memCtx := a.ShortMem.Summary()
 
-	systemPrompt := fmt.Sprintf(`You are a %s specialist analyzing the "%s" region of a codebase.
+	// Build prompt from domain template or fallback.
+	var systemPrompt string
+	if tmpl, ok := a.roles.RolePrompts[a.Role]; ok && tmpl != "" {
+		systemPrompt = expandTemplate(tmpl, a.PointID, localVal, codeContext)
+		if memCtx != "" {
+			systemPrompt += "\n\nPrevious context: " + memCtx
+		}
+	} else {
+		// Generic fallback prompt.
+		systemPrompt = fmt.Sprintf(`You are a %s specialist analyzing the "%s" region.
 Signal %s = %.2f (0=fine, 1=critical).
 
-SOURCE CODE:
+CONTENT:
 %s
 
 Previous context: %s
 
 INSTRUCTIONS:
-- You have the source code above. Analyze it NOW.
-- Find SPECIFIC issues: cite file names, function names, line references, and quote problematic code.
+- Analyze the content above. Find SPECIFIC issues related to your specialty.
 - Output a numbered list of concrete findings with severity.
-- Do NOT say "I need to read" or "Let me check" — the code is already provided above.`, a.Role, a.PointID, targetSig, localVal, codeContext, memCtx)
+- Do NOT narrate. Analyze directly.`, a.Role, a.PointID, targetSig, localVal, codeContext, memCtx)
+	}
 
 	resp := a.provider.Generate(llm.Request{
 		SystemPrompt: systemPrompt,
-		UserPrompt:   fmt.Sprintf("Analyze the %s source code above. List every %s issue you find.", a.PointID, a.Role),
+		UserPrompt:   fmt.Sprintf("Analyze the %s content above. List every %s issue you find.", a.PointID, a.Role),
 	})
 
 	if resp.Err != nil {
@@ -261,6 +271,16 @@ INSTRUCTIONS:
 	f.AddSignal(a.PointID, targetSig, -localVal*0.2)
 
 	return work
+}
+
+// expandTemplate replaces {{.Region}}, {{.Value}}, {{.Code}} in a prompt template.
+func expandTemplate(tmpl string, region string, value float64, code string) string {
+	r := strings.NewReplacer(
+		"{{.Region}}", region,
+		"{{.Value}}", fmt.Sprintf("%.2f", value),
+		"{{.Code}}", code,
+	)
+	return r.Replace(tmpl)
 }
 
 // remember stores an observation in short-term memory.

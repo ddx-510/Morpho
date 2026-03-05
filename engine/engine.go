@@ -71,6 +71,7 @@ type Engine struct {
 	Config   Config
 	Tools    *tool.Registry
 	LongMem  *memory.LongTerm
+	Roles    *agent.RoleMapping
 
 	tick       int
 	agentID    int
@@ -90,6 +91,7 @@ func New(f *field.GradientField, cfg Config, tools *tool.Registry, longMem *memo
 		Config:    cfg,
 		Tools:     tools,
 		LongMem:   longMem,
+		Roles:     defaultRoleMapping(),
 		log:       func(s string) { fmt.Println(s) },
 		progress:  func(ProgressEvent) {},
 		coveredBy: make(map[string]map[string]bool),
@@ -98,6 +100,26 @@ func New(f *field.GradientField, cfg Config, tools *tool.Registry, longMem *memo
 			ByPoint: make(map[string]int),
 		},
 	}
+}
+
+// SetRoles configures the signal-to-role mapping for domain-specific behavior.
+func (e *Engine) SetRoles(roles *agent.RoleMapping) {
+	e.Roles = roles
+}
+
+// defaultRoleMapping returns the classic code-review mapping for backward compat.
+func defaultRoleMapping() *agent.RoleMapping {
+	rm := agent.NewRoleMapping()
+	rm.SignalToRole[field.BugDensity] = "bug_hunter"
+	rm.SignalToRole[field.TestCoverage] = "test_writer"
+	rm.SignalToRole[field.Security] = "security_auditor"
+	rm.SignalToRole[field.Complexity] = "refactorer"
+	rm.SignalToRole[field.DocDebt] = "documenter"
+	rm.SignalToRole[field.Performance] = "optimizer"
+	for sig, role := range rm.SignalToRole {
+		rm.RoleToSignal[role] = sig
+	}
+	return rm
 }
 
 // SetLogger replaces the default logger.
@@ -183,25 +205,12 @@ func (e *Engine) stepSpawn() {
 			if val < 0.1 {
 				continue
 			}
-			role := agent.Undifferentiated
-			for s, r := range map[field.Signal]agent.Role{
-				field.BugDensity:   agent.BugHunter,
-				field.TestCoverage: agent.TestWriter,
-				field.Security:     agent.SecurityAuditor,
-				field.Complexity:   agent.Refactorer,
-				field.DocDebt:      agent.Documenter,
-				field.Performance:  agent.Optimizer,
-			} {
-				if s == sig {
-					role = r
-					break
-				}
-			}
-			if role == agent.Undifferentiated {
+			role, ok := e.Roles.SignalToRole[sig]
+			if !ok {
 				continue
 			}
 			// Skip if this role is already active at this point.
-			if e.coveredBy[pid] != nil && e.coveredBy[pid][string(role)] {
+			if e.coveredBy[pid] != nil && e.coveredBy[pid][role] {
 				continue
 			}
 			candidates = append(candidates, candidate{pointID: pid, signal: val})
@@ -217,7 +226,7 @@ func (e *Engine) stepSpawn() {
 		}
 		e.agentID++
 		id := fmt.Sprintf("a%d", e.agentID)
-		a := agent.New(id, c.pointID, e.Config.Provider, e.Tools, e.LongMem, e.Config.ShortTermCapacity)
+		a := agent.New(id, c.pointID, e.Config.Provider, e.Tools, e.LongMem, e.Config.ShortTermCapacity, e.Roles)
 		a.SetTick(e.tick)
 		e.Agents = append(e.Agents, a)
 		e.log(fmt.Sprintf("  spawn %s at %s (signal=%.2f)", id, c.pointID, c.signal))
@@ -230,7 +239,7 @@ func (e *Engine) stepSpawn() {
 		pointID := points[e.agentID%len(points)]
 		e.agentID++
 		id := fmt.Sprintf("a%d", e.agentID)
-		a := agent.New(id, pointID, e.Config.Provider, e.Tools, e.LongMem, e.Config.ShortTermCapacity)
+		a := agent.New(id, pointID, e.Config.Provider, e.Tools, e.LongMem, e.Config.ShortTermCapacity, e.Roles)
 		a.SetTick(e.tick)
 		e.Agents = append(e.Agents, a)
 		e.log(fmt.Sprintf("  spawn %s at %s", id, pointID))

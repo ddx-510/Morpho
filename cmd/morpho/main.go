@@ -8,11 +8,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ddx-510/Morpho/agent"
 	"github.com/ddx-510/Morpho/config"
+	"github.com/ddx-510/Morpho/domain"
 	"github.com/ddx-510/Morpho/engine"
 	"github.com/ddx-510/Morpho/memory"
-	"github.com/ddx-510/Morpho/scan"
-	"github.com/ddx-510/Morpho/tool"
 )
 
 // ANSI colors
@@ -40,6 +40,7 @@ var roleColor = map[string]string{
 func main() {
 	configPath := flag.String("config", "morpho.json", "Path to config file")
 	verbose := flag.Bool("v", false, "Verbose mode (show all engine logs)")
+	domainName := flag.String("domain", "code_review", "Domain: code_review, research, writing_review, data_analysis, or free-text task description")
 	flag.Parse()
 
 	target := "."
@@ -68,26 +69,59 @@ func main() {
 		log.Fatalf("provider: %v", err)
 	}
 
-	// Header
-	fmt.Printf("\n%s%s MORPHO %s Morphogenetic Code Analysis%s\n", bold, cyan, dim, reset)
-	fmt.Printf("%s target: %s%s\n", dim, target, reset)
-	fmt.Printf("%s provider: %s%s\n\n", dim, provider.Name(), reset)
+	// Resolve domain — built-in name or auto-generate from task description.
+	var dom *domain.Domain
+	if d, ok := domain.Get(*domainName); ok {
+		dom = d
+	} else {
+		// Treat the domain flag as a free-text task description.
+		fmt.Printf("%s%s MORPHO %s Generating domain from task...%s\n", bold, cyan, dim, reset)
+		fmt.Printf("%s task: %s%s\n", dim, *domainName, reset)
+		d, err := domain.Auto(provider, *domainName, target)
+		if err != nil {
+			log.Fatalf("auto domain: %v", err)
+		}
+		dom = d
+		fmt.Printf("%s generated domain: %s%s%s — %s\n", dim, bold, dom.Name, reset, dom.Description)
+		fmt.Printf("%s signals: ", dim)
+		for i, s := range dom.Signals {
+			if i > 0 {
+				fmt.Print(", ")
+			}
+			fmt.Print(string(s.Name))
+		}
+		fmt.Printf("%s\n", reset)
+		fmt.Printf("%s roles: ", dim)
+		for i, r := range dom.Roles {
+			if i > 0 {
+				fmt.Print(", ")
+			}
+			fmt.Print(r.Name)
+		}
+		fmt.Printf("%s\n\n", reset)
+	}
 
-	// Scan
-	f, err := scan.Dir(target)
+	// Header
+	fmt.Printf("\n%s%s MORPHO %s %s%s\n", bold, cyan, dim, dom.Description, reset)
+	fmt.Printf("%s target: %s%s\n", dim, target, reset)
+	fmt.Printf("%s provider: %s%s\n", dim, provider.Name(), reset)
+	fmt.Printf("%s domain: %s%s\n\n", dim, dom.Name, reset)
+
+	// Seed the gradient field using the domain's seeder.
+	f, err := dom.Seeder(target)
 	if err != nil {
-		log.Fatalf("scan: %v", err)
+		log.Fatalf("seed: %v", err)
 	}
 
 	points := f.Points()
 	if len(points) == 0 {
-		fmt.Println("No code found to analyze.")
+		fmt.Println("No content found to analyze.")
 		return
 	}
 
 	fmt.Printf("%s scanning...%s found %d regions: %s\n\n", dim, reset, len(points), strings.Join(points, ", "))
 
-	// Show gradient field as a compact heatmap
+	// Show gradient field
 	fmt.Printf("%s%s GRADIENT FIELD %s\n", bold, yellow, reset)
 	snapshot := f.Snapshot()
 	for _, line := range strings.Split(strings.TrimSpace(snapshot), "\n") {
@@ -95,8 +129,16 @@ func main() {
 	}
 	fmt.Println()
 
-	// Set up tools and memory
-	tools := tool.DefaultRegistry(target)
+	// Build role mapping from domain.
+	roles := agent.NewRoleMapping()
+	for _, r := range dom.Roles {
+		roles.SignalToRole[r.Signal] = r.Name
+		roles.RoleToSignal[r.Name] = r.Signal
+		roles.RolePrompts[r.Name] = r.Prompt
+	}
+
+	// Set up tools and memory.
+	var tools = dom.ToolBuilder(target)
 	longMem := memory.NewLongTerm(cfg.Memory.LongTermPath)
 
 	engCfg := engine.Config{
@@ -109,8 +151,9 @@ func main() {
 	}
 
 	eng := engine.New(f, engCfg, tools, longMem)
+	eng.SetRoles(roles)
 	if !*verbose {
-		eng.Quiet() // suppress raw logs, use progress instead
+		eng.Quiet()
 	}
 
 	start := time.Now()

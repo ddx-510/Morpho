@@ -27,7 +27,7 @@
   },
 
   "memory": {
-    "short_term_capacity": 20,
-    "long_term_path": ".morpho_memory.json"
+    "facts_path": ".morpho/facts.json",
+    "session_dir": ".morpho/sessions"
   }
 }

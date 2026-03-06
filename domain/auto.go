@@ -3,11 +3,13 @@ package domain
 import (
 	"encoding/json"
 	"fmt"
+	"math"
+	"os"
+	"path/filepath"
 	"strings"
 
-	"github.com/ddx-510/Morpho/field"
+	"github.com/ddx-510/Morpho/agent"
 	"github.com/ddx-510/Morpho/llm"
-	"github.com/ddx-510/Morpho/scan"
 	"github.com/ddx-510/Morpho/tool"
 )
 
@@ -25,41 +27,26 @@ type autoDomainSchema struct {
 		Description string `json:"description"`
 		Prompt      string `json:"prompt"`
 	} `json:"roles"`
+	Regions []struct {
+		Name    string             `json:"name"`
+		Signals map[string]float64 `json:"signals"`
+	} `json:"regions"`
 }
 
-// Auto uses an LLM to generate a domain definition from a free-text task description.
-// The user says "analyze my marketing copy" or "review this architecture" and the LLM
-// generates the signals, roles, and prompts automatically.
+// Auto uses an LLM to generate a domain definition from a free-text task.
 func Auto(provider llm.Provider, task string, inputPath string) (*Domain, error) {
-	systemPrompt := `You are a domain architect for Morpho, a morphogenetic multi-agent system.
-Given a task description, you design the analysis domain — the signal dimensions that agents
-will sense in the gradient field, and the specialist roles they can differentiate into.
+	stats, _ := dirStats(inputPath)
+	hasFiles := len(stats) > 0
 
-Rules:
-- Create 4-6 signals (dimensions of analysis). Each is a measurable property (0=fine, 1=critical).
-- Create 4-6 roles. Each role is triggered by one signal and has a specific analysis focus.
-- Each role needs a prompt template that tells the agent what to look for.
-- Use {{.Region}} for the region name, {{.Value}} for signal strength, {{.Code}} for the content.
-- Prompts must instruct agents to output numbered findings, cite specific content, and NOT narrate.
-
-Respond with ONLY a JSON object (no markdown, no explanation):
-{
-  "name": "domain_name",
-  "description": "What this domain analyzes",
-  "signals": [
-    {"name": "signal_name", "description": "What this signal measures"}
-  ],
-  "roles": [
-    {
-      "name": "role_name",
-      "signal": "signal_name",
-      "description": "What this role does",
-      "prompt": "You are a ... specialist analyzing \"{{.Region}}\".\nSignal signal_name = {{.Value}}.\n\nCONTENT:\n{{.Code}}\n\nINSTRUCTIONS:\n- Find specific issues...\n- Output numbered findings with severity."
-    }
-  ]
-}`
-
-	userPrompt := fmt.Sprintf("Design an analysis domain for this task:\n\n%s", task)
+	systemPrompt := autoPrompt(hasFiles)
+	userPrompt := fmt.Sprintf("Task: %s", task)
+	if hasFiles {
+		var summary strings.Builder
+		for id, s := range stats {
+			fmt.Fprintf(&summary, "  %s: %d files, %d lines\n", id, s.Files, s.Lines)
+		}
+		userPrompt += fmt.Sprintf("\n\nInput directory structure:\n%s", summary.String())
+	}
 
 	resp := provider.Generate(llm.Request{
 		SystemPrompt: systemPrompt,
@@ -69,12 +56,12 @@ Respond with ONLY a JSON object (no markdown, no explanation):
 		return nil, fmt.Errorf("LLM domain generation failed: %w", resp.Err)
 	}
 
-	// Parse JSON from response (strip markdown fences if present).
 	content := strings.TrimSpace(resp.Content)
 	content = strings.TrimPrefix(content, "```json")
 	content = strings.TrimPrefix(content, "```")
 	content = strings.TrimSuffix(content, "```")
 	content = strings.TrimSpace(content)
+	content = repairJSON(content)
 
 	var schema autoDomainSchema
 	if err := json.Unmarshal([]byte(content), &schema); err != nil {
@@ -85,32 +72,43 @@ Respond with ONLY a JSON object (no markdown, no explanation):
 		return nil, fmt.Errorf("LLM generated empty domain (no signals or roles)")
 	}
 
-	// Build the domain.
 	d := &Domain{
-		Name:        schema.Name,
+		Name:        toSnakeCase(schema.Name),
 		Description: schema.Description,
 	}
 
 	for _, s := range schema.Signals {
 		d.Signals = append(d.Signals, SignalDef{
-			Name:        field.Signal(s.Name),
+			Name:        agent.Signal(toSnakeCase(s.Name)),
 			Description: s.Description,
 		})
 	}
 
 	for _, r := range schema.Roles {
 		d.Roles = append(d.Roles, RoleDef{
-			Name:        r.Name,
-			Signal:      field.Signal(r.Signal),
+			Name:        toSnakeCase(r.Name),
+			Signal:      agent.Signal(toSnakeCase(r.Signal)),
 			Description: r.Description,
 			Prompt:      r.Prompt,
 		})
 	}
 
-	// Use code scanner seeder by default — works for any file-based input.
-	// The scan package handles code, docs, and any text files.
-	d.Seeder = func(input string) (*field.GradientField, error) {
-		return autoSeed(input, d)
+	// Validate: each role's signal must match a defined signal.
+	signalSet := make(map[agent.Signal]bool)
+	for _, s := range d.Signals {
+		signalSet[s.Name] = true
+	}
+	for i, r := range d.Roles {
+		if !signalSet[r.Signal] && len(d.Signals) > 0 {
+			d.Roles[i].Signal = d.Signals[i%len(d.Signals)].Name
+		}
+	}
+
+	d.Seeder = func(input string) (*agent.GradientField, error) {
+		if hasFiles {
+			return seedFromStats(stats, d, input)
+		}
+		return seedFromRegions(schema.Regions, d)
 	}
 	d.ToolBuilder = func(input string) *tool.Registry {
 		return tool.DefaultRegistry(input)
@@ -119,49 +117,288 @@ Respond with ONLY a JSON object (no markdown, no explanation):
 	return d, nil
 }
 
-// autoSeed creates a gradient field from the input directory,
-// distributing domain-specific signals based on content heuristics.
-func autoSeed(input string, d *Domain) (*field.GradientField, error) {
-	// First try the standard code scanner for structure.
-	f, err := scan.Dir(input)
-	if err != nil {
-		return nil, err
+func autoPrompt(hasFiles bool) string {
+	regionInstructions := ""
+	if !hasFiles {
+		regionInstructions = `
+- ALSO generate 3-6 "regions" — subtopics or aspects of the task.
+  Each region has signal values (0.0-1.0) indicating how much each signal applies there.
+  Format: "regions": [{"name": "snake_case", "signals": {"signal_name": 0.7, ...}}]`
 	}
 
-	// If the code scanner found points, augment them with the domain's signals.
-	points := f.Points()
-	if len(points) == 0 {
-		// No structure found — create a single point.
-		sigs := make(map[field.Signal]float64)
+	return fmt.Sprintf(`You are a domain architect for a multi-agent analysis system.
+Given a task, design the analysis dimensions (signals) and specialist roles.
+
+CRITICAL RULES:
+- All "name" fields MUST be snake_case identifiers (e.g. "data_quality", NOT "Data Quality")
+- Signal names and role names: lowercase, underscores, no spaces
+- Create exactly 4 signals and 4 roles (keep response short!)
+- Each role's "signal" must match one of the signal names exactly
+- Each role prompt must be 2-3 sentences max
+- Use {{.Region}}, {{.Value}}, {{.Code}} in prompts%s
+- Respond with ONLY valid JSON, no markdown
+
+JSON format:
+{"name":"domain_name","description":"short desc","signals":[{"name":"snake_case","description":"desc"}],"roles":[{"name":"snake_case","signal":"matching_signal","description":"desc","prompt":"You are a X specialist analyzing {{.Region}}. Signal={{.Value}}. Find Y issues in:\n{{.Code}}\nOutput numbered findings with severity."}]%s}`,
+		regionInstructions,
+		func() string {
+			if !hasFiles {
+				return `,"regions":[{"name":"subtopic","signals":{"signal_name":0.7}}]`
+			}
+			return ""
+		}())
+}
+
+func seedFromStats(stats map[string]*regionStats, d *Domain, rootDir string) (*agent.GradientField, error) {
+	f := agent.NewField()
+
+	if len(stats) == 0 {
+		sigs := make(map[agent.Signal]float64)
 		for _, s := range d.Signals {
-			sigs[s.Name] = 0.5 // moderate initial signal
+			sigs[s.Name] = 0.5
 		}
-		f.AddPoint(&field.Point{ID: "root", Signals: sigs})
+		f.AddPoint(&agent.Point{ID: "root", Signals: sigs})
 		return f, nil
 	}
 
-	// For each existing point, spread the domain signals evenly.
-	// The agents will refine these through their work and morphogen signals.
-	for _, pid := range points {
-		pt, ok := f.Point(pid)
-		if !ok {
+	for id, s := range stats {
+		if s.Files == 0 {
 			continue
 		}
-		// Keep existing signals and add domain signals.
-		for _, s := range d.Signals {
-			if _, exists := pt.Signals[s.Name]; !exists {
-				pt.Signals[s.Name] = 0.3 // moderate initial signal
-			}
+
+		base := 0.15
+		fileWeight := math.Min(float64(s.Files)*0.04, 0.4)
+		lineWeight := math.Min(float64(s.Lines)/2000.0, 0.4)
+		base += fileWeight + lineWeight
+		base = clamp(base)
+
+		sigs := make(map[agent.Signal]float64)
+		for _, sig := range d.Signals {
+			h := signalHash(id, string(sig.Name))
+			multiplier := 0.3 + float64(h%70)/100.0
+			sigs[sig.Name] = clamp(base * multiplier)
 		}
-		f.AddPoint(&field.Point{ID: pid, Signals: pt.Signals, Links: pt.Links})
+
+		// Pre-load region content into the field (stigmergic knowledge).
+		content := preloadRegionContent(rootDir, id)
+
+		f.AddPoint(&agent.Point{ID: id, Signals: sigs, Links: s.Links, Content: content})
 	}
 
 	return f, nil
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
+// preloadRegionContent reads key files from a region and returns a content
+// snapshot that agents will see directly — no tool calls needed.
+// Budget: ~20K chars per region to keep LLM context manageable.
+func preloadRegionContent(root, regionID string) string {
+	dir := filepath.Join(root, regionID)
+	if regionID == "." {
+		dir = root
 	}
-	return b
+
+	info, err := os.Stat(dir)
+	if err != nil || !info.IsDir() {
+		return ""
+	}
+
+	var files []string
+	filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			name := info.Name()
+			if name == ".git" || name == "node_modules" || name == "vendor" || name == "__pycache__" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		// Only source files.
+		ext := strings.ToLower(filepath.Ext(path))
+		switch ext {
+		case ".go", ".js", ".jsx", ".ts", ".tsx", ".py", ".rs", ".java", ".rb",
+			".c", ".cpp", ".h", ".md", ".yaml", ".yml", ".toml", ".sh", ".sql",
+			".json", ".css", ".html", ".vue", ".svelte":
+			rel, _ := filepath.Rel(root, path)
+			files = append(files, rel)
+		}
+		return nil
+	})
+
+	if len(files) == 0 {
+		return "(no source files)"
+	}
+
+	// Build listing + read a sample of files.
+	var buf strings.Builder
+	fmt.Fprintf(&buf, "FILES IN REGION %q (%d files):\n", regionID, len(files))
+	for _, f := range files {
+		buf.WriteString("  " + f + "\n")
+	}
+	buf.WriteString("\n")
+
+	// Read files until budget exhausted.
+	const budget = 20000
+	sampled := 0
+	for _, rel := range files {
+		if buf.Len() > budget {
+			fmt.Fprintf(&buf, "\n... (%d more files not shown, budget reached)\n", len(files)-sampled)
+			break
+		}
+		data, err := os.ReadFile(filepath.Join(root, rel))
+		if err != nil {
+			continue
+		}
+		content := string(data)
+		if len(content) > 3000 {
+			content = content[:3000] + "\n... (truncated)"
+		}
+		fmt.Fprintf(&buf, "=== %s ===\n%s\n\n", rel, content)
+		sampled++
+	}
+	return buf.String()
+}
+
+func signalHash(region, signal string) uint64 {
+	var h uint64 = 5381
+	for _, c := range region + "|" + signal {
+		h = h*33 + uint64(c)
+	}
+	return h
+}
+
+func seedFromRegions(regions []struct {
+	Name    string             `json:"name"`
+	Signals map[string]float64 `json:"signals"`
+}, d *Domain) (*agent.GradientField, error) {
+	f := agent.NewField()
+
+	if len(regions) == 0 {
+		sigs := make(map[agent.Signal]float64)
+		for _, s := range d.Signals {
+			sigs[s.Name] = 0.5
+		}
+		f.AddPoint(&agent.Point{ID: "root", Signals: sigs})
+		return f, nil
+	}
+
+	ids := make([]string, 0, len(regions))
+	for _, r := range regions {
+		ids = append(ids, toSnakeCase(r.Name))
+	}
+
+	for i, r := range regions {
+		id := toSnakeCase(r.Name)
+		sigs := make(map[agent.Signal]float64)
+
+		for sigName, val := range r.Signals {
+			sigs[agent.Signal(toSnakeCase(sigName))] = clamp(val)
+		}
+
+		for _, s := range d.Signals {
+			if _, ok := sigs[s.Name]; !ok {
+				sigs[s.Name] = 0.2
+			}
+		}
+
+		var links []string
+		for j, other := range ids {
+			if j != i {
+				links = append(links, other)
+			}
+		}
+
+		f.AddPoint(&agent.Point{ID: id, Signals: sigs, Links: links})
+	}
+
+	return f, nil
+}
+
+func toSnakeCase(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return s
+	}
+	var result strings.Builder
+	for i, r := range s {
+		if r == ' ' || r == '-' {
+			result.WriteRune('_')
+		} else if r >= 'A' && r <= 'Z' {
+			if i > 0 {
+				prev := rune(s[i-1])
+				if prev != '_' && prev != ' ' && prev != '-' && !(prev >= 'A' && prev <= 'Z') {
+					result.WriteRune('_')
+				}
+			}
+			result.WriteRune(r + 32)
+		} else {
+			result.WriteRune(r)
+		}
+	}
+	out := result.String()
+	for strings.Contains(out, "__") {
+		out = strings.ReplaceAll(out, "__", "_")
+	}
+	return strings.Trim(out, "_")
+}
+
+func repairJSON(s string) string {
+	if json.Valid([]byte(s)) {
+		return s
+	}
+
+	inString := false
+	escaped := false
+	var stack []byte
+
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if escaped {
+			escaped = false
+			continue
+		}
+		if c == '\\' && inString {
+			escaped = true
+			continue
+		}
+		if c == '"' {
+			inString = !inString
+			continue
+		}
+		if inString {
+			continue
+		}
+		switch c {
+		case '{':
+			stack = append(stack, '}')
+		case '[':
+			stack = append(stack, ']')
+		case '}', ']':
+			if len(stack) > 0 && stack[len(stack)-1] == c {
+				stack = stack[:len(stack)-1]
+			}
+		}
+	}
+
+	if len(stack) == 0 && !inString {
+		return s
+	}
+
+	repaired := s
+	if inString {
+		repaired += `"`
+	}
+
+	repaired = strings.TrimRight(repaired, " \t\n\r,:")
+
+	for i := len(stack) - 1; i >= 0; i-- {
+		repaired += string(stack[i])
+	}
+
+	if json.Valid([]byte(repaired)) {
+		return repaired
+	}
+	return s
+}
+
+func clamp(v float64) float64 {
+	return math.Max(0, math.Min(1, v))
 }

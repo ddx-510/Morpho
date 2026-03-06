@@ -1,45 +1,48 @@
 # Morpho
 
-A bio-inspired multi-agent code analysis system built in Go. Agents differentiate into specialist roles based on gradient signals detected in source code, mimicking morphogenetic processes in biology.
+A bio-inspired multi-agent system built in Go. Agents differentiate into specialist roles based on gradient signals, mimicking morphogenesis in biology. No external dependencies.
 
-## How It Works
+## What It Does
 
-```
-Source Code → Scan → Gradient Field → Spawn Agents → Differentiate → Analyze → Report
-```
-
-1. **Scan** — walks a codebase directory, groups files by package/folder, and seeds a gradient field with heuristic signals (complexity, bug density, test coverage, security, performance, doc debt)
-2. **Gradient Field** — a multi-dimensional signal space where each region has signal strengths that decay and diffuse over time
-3. **Agents** — spawn as undifferentiated cells, read local gradients, and specialize into roles:
-   - `bug_hunter` — logic errors, edge cases, nil dereferences
-   - `test_writer` — missing test coverage
-   - `security_auditor` — injection, hardcoded secrets, unsafe operations
-   - `refactorer` — complexity, duplication, god objects
-   - `documenter` — missing or misleading docs
-   - `optimizer` — performance issues, unnecessary allocations
-4. **Morphogen Bus** — stigmergic signaling between agents (PRESENCE, NEED, SATURATION, ALARM) that modulates the field
-5. **Tissue Formation** — co-located agents cluster into tissues for collaborative analysis
-6. **Apoptosis** — agents with no signal or depleted energy die off, preventing wasted work
-
-## Architecture
+Morpho is a chat-first agent that automatically scales its execution based on task complexity:
 
 ```
-morpho/
-├── field/       # Gradient field with signal decay + diffusion
-├── morphogen/   # Stigmergic signal bus (thread-safe)
-├── agent/       # Agent lifecycle: differentiation, work, apoptosis
-├── tissue/      # Cluster detection for co-located agents
-├── engine/      # Tick-based simulation loop
-├── llm/         # Multi-provider LLM interface (OpenAI, Claude, Gemini, etc.)
-├── tool/        # Built-in tools: read_file, grep, patch_file, shell, list_files
-├── memory/      # Short-term (per-agent) + long-term (shared) memory
-├── scan/        # Directory scanner that seeds gradient signals
-├── config/      # JSON config with provider presets
-├── cmd/
-│   ├── morpho/  # CLI with colored progress output
-│   ├── bench/   # Benchmark: single-agent vs morpho comparison
-│   └── viz/     # Web dashboard with real-time visualization
+Simple question  →  chat   →  direct LLM response
+Focused task     →  assist →  single agent with tool-calling loop
+Broad analysis   →  swarm  →  multi-agent morphogenetic system
 ```
+
+The **router** uses an LLM call to classify intent — not keyword matching. It reads conversation history for context, returns a structured plan, and supports escalation (assist can upgrade to swarm mid-task if the scope turns out to be larger than expected).
+
+## Why This Architecture
+
+**The problem with most agent systems:** they're either too simple (one LLM call, no tools) or too heavy (always spawn a full orchestration pipeline). There's no middle ground, and no way for the system itself to decide.
+
+**Morpho's approach — three tiers with emergent routing:**
+
+| Tier | Cost | When |
+|------|------|------|
+| **Chat** | 1 LLM call | Greetings, explanations, simple questions |
+| **Assist** | 2-8 LLM calls | Read a file, search code, fix a specific bug |
+| **Swarm** | 10-50+ LLM calls | Codebase-wide security audit, comprehensive review |
+
+The router doesn't just save tokens — it gives you the right **interaction pattern** for each task. A simple question shouldn't spawn 20 agents. A security audit shouldn't be one LLM call.
+
+**The swarm tier is where the biology comes in:**
+
+1. **Gradient field** — a multi-dimensional signal space seeded from the input (code complexity, bug density, security risk, etc). Each region has signal strengths that decay and diffuse over time.
+
+2. **Differentiation** — agents spawn undifferentiated, read local gradients, and specialize into the role matching the strongest signal. No central controller assigns roles.
+
+3. **Morphogen bus** — stigmergic signaling (PRESENCE, NEED, SATURATION, ALARM) between agents modulates the field. If an agent finds a critical security issue, it emits ALARM, attracting more agents to that region.
+
+4. **Apoptosis** — agents die when their local signal drops below threshold or energy depletes. This is emergent resource management — no orchestrator decides who lives.
+
+5. **Pre-read, don't tool-loop** — agents inject source content directly into the LLM prompt instead of making the LLM call tools iteratively. One LLM call per agent per tick. This eliminates the "let me read the file" narration problem.
+
+The result: agents naturally concentrate on high-signal regions, avoid redundant work, and self-terminate when done. The system adapts to the shape of the input.
+
+**Domain-agnostic** — the engine, field, and morphogen bus know nothing about code review. The `domain/` package defines signals, roles, prompts, and seeders. Built-in domains: `code_review`, `research`, `writing_review`, `data_analysis`. Or pass any free-text task description and Morpho auto-generates a domain via LLM.
 
 ## Quick Start
 
@@ -57,56 +60,77 @@ cat > morpho.json << 'EOF'
     "decay_rate": 0.05,
     "diffusion_rate": 0.3,
     "spawn_per_tick": 2
-  },
-  "memory": {
-    "short_term_capacity": 20,
-    "long_term_path": ".morpho_memory.json"
   }
 }
 EOF
 
-# Analyze a codebase (with live progress)
-go run cmd/morpho/main.go /path/to/project
+# Terminal mode (default)
+go run cmd/morpho/main.go
 
-# Run benchmark comparison
-go run cmd/bench/main.go /path/to/project
+# Web UI mode
+go run cmd/morpho/main.go -web
 
-# Launch web visualization dashboard
-go run cmd/viz/main.go /path/to/project
-# → Open http://localhost:8420 and click Start
+# Point at a specific directory
+go run cmd/morpho/main.go -dir /path/to/project
+```
+
+### Terminal UI
+
+```
+  morpho
+  ──────────────────────────────────────────────────
+  provider  OpenAI(gpt-4o)
+  dir       /path/to/project
+  routing   chat │ assist │ swarm (auto)
+  ──────────────────────────────────────────────────
+
+  ❯ hi
+  [chat] conversational greeting
+  │ Hello! How can I help?
+
+  ❯ what does the Run method in engine.go do?
+  [assist] focused question about specific function
+  ▸ read_file  {path: engine/engine.go}
+  │ The Run method executes the tick-based simulation loop...
+
+  ❯ review this codebase for security issues
+  [swarm] broad multi-file security analysis
+  ━━ tick 1/5
+   + a1 at agent/
+   ~ a1 → security_auditor
+   ✓ security_auditor a1@agent/
+  ...
+```
+
+### Scheduled Tasks
+
+```
+  ❯ /cron add 1h review this project for new bugs
+  scheduled [job1] every 1h0m0s: review this project for new bugs
+
+  ❯ /cron list
+  [job1] every 1h0m0s (active): review this project for new bugs
+
+  ❯ /cron pause job1
+  ❯ /cron rm job1
 ```
 
 ## Supported Providers
 
-Configure via `morpho.json` — set `type` to any of:
+Configure `type` in `morpho.json`:
 
-| Type         | Default Model                    | Base URL                                        |
-|--------------|----------------------------------|-------------------------------------------------|
-| `openai`     | gpt-4o                          | https://api.openai.com/v1                       |
-| `claude`     | claude-sonnet-4-20250514        | https://api.anthropic.com                       |
-| `gemini`     | gemini-2.0-flash                | https://generativelanguage.googleapis.com        |
-| `openrouter` | anthropic/claude-sonnet-4-20250514 | https://openrouter.ai/api/v1                 |
-| `groq`       | llama-3.3-70b-versatile         | https://api.groq.com/openai/v1                  |
-| `together`   | meta-llama/Llama-3.3-70B...     | https://api.together.xyz/v1                     |
-| `deepseek`   | deepseek-chat                   | https://api.deepseek.com/v1                     |
-| `ollama`     | llama3                          | http://localhost:11434/v1                        |
+| Type | Default Model | Base URL |
+|------|--------------|----------|
+| `openai` | gpt-4o | https://api.openai.com/v1 |
+| `claude` | claude-sonnet-4-20250514 | https://api.anthropic.com |
+| `gemini` | gemini-2.0-flash | https://generativelanguage.googleapis.com |
+| `openrouter` | anthropic/claude-sonnet-4-20250514 | https://openrouter.ai/api/v1 |
+| `groq` | llama-3.3-70b-versatile | https://api.groq.com/openai/v1 |
+| `together` | meta-llama/Llama-3.3-70B... | https://api.together.xyz/v1 |
+| `deepseek` | deepseek-chat | https://api.deepseek.com/v1 |
+| `ollama` | llama3 | http://localhost:11434/v1 |
 
-Any unknown type with a `base_url` is treated as OpenAI-compatible.
-
-Use `$ENV_VAR` syntax in `api_key` to reference environment variables.
-
-## Benchmark Results
-
-See [BENCH.md](BENCH.md) for detailed comparison data.
-
-**TL;DR** — On a ~2k LOC Go codebase, morpho matches a single-agent's code-specific finding count (28 vs 27) while achieving 100% code-specificity rate (vs 35% for generalist). Specialist agents find issues a generalist overlooks. The gradient field naturally allocates more agents to higher-signal regions.
-
-## Key Design Decisions
-
-- **Pre-read, don't tool-loop** — agents read their region's source files directly and inject code into the LLM prompt, rather than asking the LLM to call tools. This eliminates the "let me read the file" narration problem.
-- **One LLM call per agent per tick** — keeps the agent loop simple and predictable.
-- **Signal decay + diffusion** — prevents agents from re-analyzing already-covered regions while spreading awareness of nearby issues.
-- **Apoptosis over orchestration** — agents die when their local signal drops below threshold, rather than a central controller deciding who lives. This is emergent resource management.
+Any unknown type with a `base_url` is treated as OpenAI-compatible. Use `$ENV_VAR` syntax in `api_key`.
 
 ## License
 

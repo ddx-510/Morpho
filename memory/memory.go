@@ -2,177 +2,225 @@ package memory
 
 import (
 	"encoding/json"
-	"fmt"
+	"math"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 )
 
-// Entry is a single memory item.
-type Entry struct {
-	Tick      int       `json:"tick"`
-	Timestamp time.Time `json:"timestamp"`
-	AgentID   string    `json:"agent_id"`
-	Category  string    `json:"category"` // "observation", "finding", "action", "tool_result"
-	Content   string    `json:"content"`
+// ── Tissue Memory (epigenetic) ──────────────────────────────────────
+// Persists field state across sessions. When a swarm analyzes a codebase,
+// the findings and signal levels are saved. Next time the same regions
+// appear, agents start with residual knowledge instead of blank slate.
+//
+// Analogy: epigenetic marks — the organism's cells died, but the tissue
+// retains chemical imprints that influence future cell behavior.
+
+// RegionMemory is the persisted knowledge about one field region.
+type RegionMemory struct {
+	RegionID   string             `json:"region_id"`
+	Signals    map[string]float64 `json:"signals"`              // last known signal values
+	Findings   []string           `json:"findings"`             // accumulated findings
+	LastSeen   time.Time          `json:"last_seen"`
+	RunCount   int                `json:"run_count"`            // how many swarm runs touched this region
+	FindingSet map[string]bool    `json:"finding_hashes"`       // dedup hashes
 }
 
-func (e Entry) String() string {
-	return fmt.Sprintf("[t%d %s] %s: %s", e.Tick, e.Category, e.AgentID, e.Content)
-}
-
-// ShortTerm is per-agent working memory that resets or rolls over per tick.
-type ShortTerm struct {
-	capacity int
-	entries  []Entry
-}
-
-// NewShortTerm creates a short-term memory with the given capacity.
-func NewShortTerm(capacity int) *ShortTerm {
-	return &ShortTerm{capacity: capacity}
-}
-
-// Add stores an entry, evicting the oldest if at capacity.
-func (m *ShortTerm) Add(e Entry) {
-	if len(m.entries) >= m.capacity {
-		m.entries = m.entries[1:]
-	}
-	m.entries = append(m.entries, e)
-}
-
-// Recent returns the last n entries.
-func (m *ShortTerm) Recent(n int) []Entry {
-	if n >= len(m.entries) {
-		return m.entries
-	}
-	return m.entries[len(m.entries)-n:]
-}
-
-// All returns all entries.
-func (m *ShortTerm) All() []Entry {
-	return m.entries
-}
-
-// Summary returns a text summary suitable for injecting into LLM context.
-func (m *ShortTerm) Summary() string {
-	if len(m.entries) == 0 {
-		return "(no working memory)"
-	}
-	var sb strings.Builder
-	for _, e := range m.entries {
-		sb.WriteString(e.String())
-		sb.WriteString("\n")
-	}
-	return sb.String()
-}
-
-// Clear resets working memory.
-func (m *ShortTerm) Clear() {
-	m.entries = m.entries[:0]
-}
-
-// LongTerm is a shared persistent memory store backed by a JSON file.
-type LongTerm struct {
+// TissueMemory is the organism-level persistent field memory.
+type TissueMemory struct {
 	mu      sync.RWMutex
 	path    string
-	entries []Entry
+	Regions map[string]*RegionMemory `json:"regions"`
 }
 
-// NewLongTerm creates or loads a long-term memory store.
-func NewLongTerm(path string) *LongTerm {
-	lt := &LongTerm{path: path}
-	lt.load()
-	return lt
+// NewTissueMemory creates or loads tissue memory from disk.
+func NewTissueMemory(path string) *TissueMemory {
+	tm := &TissueMemory{
+		path:    path,
+		Regions: make(map[string]*RegionMemory),
+	}
+	tm.load()
+	return tm
 }
 
-func (m *LongTerm) load() {
-	data, err := os.ReadFile(m.path)
+func (tm *TissueMemory) load() {
+	data, err := os.ReadFile(tm.path)
 	if err != nil {
 		return
 	}
-	json.Unmarshal(data, &m.entries)
+	json.Unmarshal(data, &tm.Regions)
 }
 
-// Save persists memory to disk.
-func (m *LongTerm) Save() error {
-	if m.path == "" {
+func (tm *TissueMemory) save() error {
+	if tm.path == "" {
 		return nil
 	}
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	data, err := json.MarshalIndent(m.entries, "", "  ")
+	dir := filepath.Dir(tm.path)
+	if dir != "." && dir != "" {
+		os.MkdirAll(dir, 0755)
+	}
+	data, err := json.MarshalIndent(tm.Regions, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(m.path, data, 0644)
+	return os.WriteFile(tm.path, data, 0644)
 }
 
-// Store adds an entry to long-term memory and persists.
-func (m *LongTerm) Store(e Entry) {
-	m.mu.Lock()
-	m.entries = append(m.entries, e)
-	m.mu.Unlock()
-	m.Save()
-}
+// Absorb ingests findings and signals from a completed swarm run.
+// Signal values are stored with time-decay: older values fade.
+func (tm *TissueMemory) Absorb(regionID string, signals map[string]float64, findings []string) {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
 
-// Query returns entries matching a category and/or containing a substring.
-func (m *LongTerm) Query(category string, contains string) []Entry {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	var results []Entry
-	for _, e := range m.entries {
-		if category != "" && e.Category != category {
+	rm, ok := tm.Regions[regionID]
+	if !ok {
+		rm = &RegionMemory{
+			RegionID:   regionID,
+			Signals:    make(map[string]float64),
+			FindingSet: make(map[string]bool),
+		}
+		tm.Regions[regionID] = rm
+	}
+
+	// Merge signals: blend old (decayed) with new.
+	for sig, val := range signals {
+		old := rm.Signals[sig]
+		rm.Signals[sig] = old*0.3 + val*0.7 // new dominates
+	}
+
+	// Add findings with dedup.
+	for _, f := range findings {
+		hash := findingHash(f)
+		if rm.FindingSet[hash] {
 			continue
 		}
-		if contains != "" && !strings.Contains(e.Content, contains) {
-			continue
+		rm.FindingSet[hash] = true
+		rm.Findings = append(rm.Findings, f)
+	}
+
+	// Cap findings per region to prevent unbounded growth.
+	if len(rm.Findings) > 50 {
+		rm.Findings = rm.Findings[len(rm.Findings)-50:]
+	}
+
+	rm.LastSeen = time.Now()
+	rm.RunCount++
+	tm.save()
+}
+
+// Recall returns prior knowledge for a region: residual signals and past findings.
+// Signals are decayed based on time since last seen.
+func (tm *TissueMemory) Recall(regionID string) (signals map[string]float64, findings []string) {
+	tm.mu.RLock()
+	defer tm.mu.RUnlock()
+
+	rm, ok := tm.Regions[regionID]
+	if !ok {
+		return nil, nil
+	}
+
+	// Time-decay: signals fade over days.
+	daysSince := time.Since(rm.LastSeen).Hours() / 24
+	decay := math.Exp(-0.1 * daysSince) // half-life ~7 days
+
+	signals = make(map[string]float64)
+	for sig, val := range rm.Signals {
+		decayed := val * decay
+		if decayed > 0.01 {
+			signals[sig] = decayed
 		}
-		results = append(results, e)
 	}
-	return results
+
+	findings = rm.Findings
+	return signals, findings
 }
 
-// ByAgent returns all entries from a specific agent.
-func (m *LongTerm) ByAgent(agentID string) []Entry {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	var results []Entry
-	for _, e := range m.entries {
-		if e.AgentID == agentID {
-			results = append(results, e)
+// AllRegions returns all region IDs in tissue memory.
+func (tm *TissueMemory) AllRegions() []string {
+	tm.mu.RLock()
+	defer tm.mu.RUnlock()
+	ids := make([]string, 0, len(tm.Regions))
+	for id := range tm.Regions {
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+// RegionCount returns the number of remembered regions.
+func (tm *TissueMemory) RegionCount() int {
+	tm.mu.RLock()
+	defer tm.mu.RUnlock()
+	return len(tm.Regions)
+}
+
+// findingHash produces a simple content hash for dedup.
+// Uses first 100 chars lowercased + length — cheap but effective.
+func findingHash(s string) string {
+	s = strings.TrimSpace(strings.ToLower(s))
+	if len(s) > 100 {
+		s = s[:100]
+	}
+	return s
+}
+
+// ── TF-IDF Scoring ──────────────────────────────────────────────────
+// Used by FactStore.Relevant() for better retrieval than substring.
+
+// tfidfScore computes a relevance score between a query and a document.
+// Both are plain text. Returns 0-1 normalized score.
+func tfidfScore(query, doc string) float64 {
+	queryTerms := tokenize(query)
+	docTerms := tokenize(doc)
+	if len(queryTerms) == 0 || len(docTerms) == 0 {
+		return 0
+	}
+
+	// Term frequency in document.
+	docTF := make(map[string]int)
+	for _, t := range docTerms {
+		docTF[t]++
+	}
+
+	// Score: sum of (tf * idf-proxy) for each query term found in doc.
+	// IDF proxy: rarer terms in the doc get higher weight.
+	var score float64
+	docLen := float64(len(docTerms))
+	for _, qt := range queryTerms {
+		tf := float64(docTF[qt]) / docLen
+		if tf > 0 {
+			// IDF proxy: penalize very common terms.
+			idf := 1.0 + math.Log(docLen/float64(docTF[qt]))
+			score += tf * idf
 		}
 	}
-	return results
+
+	// Normalize by query length.
+	return math.Min(score/float64(len(queryTerms)), 1.0)
 }
 
-// All returns all long-term entries.
-func (m *LongTerm) All() []Entry {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	cp := make([]Entry, len(m.entries))
-	copy(cp, m.entries)
-	return cp
-}
-
-// Summary returns a text summary of all long-term memories.
-func (m *LongTerm) Summary() string {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	if len(m.entries) == 0 {
-		return "(no long-term memories)"
+func tokenize(s string) []string {
+	s = strings.ToLower(s)
+	words := strings.FieldsFunc(s, func(r rune) bool {
+		return !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_')
+	})
+	// Filter stopwords and very short tokens.
+	var result []string
+	for _, w := range words {
+		if len(w) >= 2 && !isStopword(w) {
+			result = append(result, w)
+		}
 	}
-	var sb strings.Builder
-	for _, e := range m.entries {
-		sb.WriteString(e.String())
-		sb.WriteString("\n")
-	}
-	return sb.String()
+	return result
 }
 
-// Count returns the number of stored memories.
-func (m *LongTerm) Count() int {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return len(m.entries)
+var stopwords = map[string]bool{
+	"the": true, "is": true, "at": true, "in": true, "of": true,
+	"and": true, "or": true, "to": true, "for": true, "it": true,
+	"this": true, "that": true, "with": true, "from": true, "on": true,
+	"an": true, "be": true, "as": true, "are": true, "was": true,
+	"has": true, "have": true, "had": true, "not": true, "but": true,
 }
+
+func isStopword(w string) bool { return stopwords[w] }

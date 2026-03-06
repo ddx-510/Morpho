@@ -1,6 +1,7 @@
 package tool
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -11,8 +12,8 @@ import (
 type Tool interface {
 	Name() string
 	Description() string
-	Parameters() map[string]string // param name -> description
-	Execute(args map[string]string) Result
+	Parameters() json.RawMessage      // JSON Schema for parameters
+	Execute(args map[string]any) Result
 }
 
 // Result is what a tool returns after execution.
@@ -21,7 +22,7 @@ type Result struct {
 	Err    error
 }
 
-// Registry holds available tools, organized by role suitability.
+// Registry holds available tools.
 type Registry struct {
 	tools map[string]Tool
 }
@@ -67,7 +68,6 @@ func (r *Registry) ToLLMSpecs() []llm.ToolSpec {
 // ExecuteCall runs a tool call and returns the result.
 func (r *Registry) ExecuteCall(call llm.ToolCall) Result {
 	name := call.Name
-	// Some proxies prefix tool names (e.g. "proxy_read_file" -> "read_file").
 	t, ok := r.tools[name]
 	if !ok {
 		for _, prefix := range []string{"proxy_", "functions.", "tool_"} {
@@ -108,4 +108,43 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "..."
+}
+
+// StringArg extracts a string argument from the args map.
+func StringArg(args map[string]any, key string) string {
+	v, ok := args[key]
+	if !ok {
+		return ""
+	}
+	switch s := v.(type) {
+	case string:
+		return s
+	case float64:
+		if s == float64(int(s)) {
+			return fmt.Sprintf("%d", int(s))
+		}
+		return fmt.Sprintf("%g", s)
+	default:
+		return fmt.Sprintf("%v", v)
+	}
+}
+
+// IntArg extracts an integer argument from the args map.
+func IntArg(args map[string]any, key string, defaultVal int) int {
+	v, ok := args[key]
+	if !ok {
+		return defaultVal
+	}
+	switch n := v.(type) {
+	case float64:
+		return int(n)
+	case int:
+		return n
+	case string:
+		var i int
+		fmt.Sscanf(n, "%d", &i)
+		return i
+	default:
+		return defaultVal
+	}
 }

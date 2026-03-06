@@ -5,6 +5,8 @@
 /vendor/
 .DS_Store
 .morpho_memory.json
+.morpho/
 /morpho.json
 /morpho
-/viz
+ui/frontend/node_modules/
+ui/frontend/dist/

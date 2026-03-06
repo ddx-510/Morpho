@@ -1,0 +1,145 @@
+/* ── Tank — compact scrollable dashboard ── */
+.tank {
+  max-height: 260px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background:
+    radial-gradient(ellipse at 20% 30%, rgba(22, 163, 74, 0.03) 0%, transparent 60%),
+    var(--bg);
+  border-top: 1px solid var(--border-light);
+  border-bottom: 1px solid var(--border-light);
+  position: relative;
+}
+.tank.done {
+  max-height: 200px;
+}
+.tank::-webkit-scrollbar { width: 4px; }
+.tank::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+.tank-empty {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-family: 'SF Mono', monospace;
+  justify-content: center;
+  padding: 20px 0;
+  animation: fadeIn 0.5s var(--ease);
+}
+
+/* ── Grid of regions ── */
+.tank-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 1px;
+  background: var(--border-light);
+}
+
+/* ── Region tile ── */
+.tank-region {
+  background: var(--bg);
+  padding: 8px;
+  min-height: 60px;
+}
+.tank-region-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+.tank-region-name {
+  font-size: 9px;
+  font-family: 'SF Mono', monospace;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100px;
+}
+.tank-region-count {
+  font-size: 8px;
+  font-family: 'SF Mono', monospace;
+  color: var(--mint-600);
+  background: var(--mint-50);
+  padding: 1px 5px;
+  border-radius: 8px;
+  font-weight: 600;
+}
+
+.tank-region-cells {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: flex-start;
+}
+
+/* ── Cell — compact organism ── */
+.cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 6px;
+  transition: background 0.15s;
+}
+.cell:hover { background: rgba(22, 163, 74, 0.06); }
+.cell.selected { background: rgba(22, 163, 74, 0.1); }
+.cell.selected .cell-body { border-color: var(--mint-500) !important; }
+
+/* ── Cell body — the circle ── */
+.cell-body {
+  position: relative;
+  border-radius: 50%;
+  border: 1.5px solid;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: width 0.3s, height 0.3s, background 0.4s, box-shadow 0.3s;
+  flex-shrink: 0;
+}
+.cell.dead .cell-body {
+  border-style: dashed;
+  border-color: var(--border) !important;
+}
+
+.cell-nucleus {
+  width: 35%;
+  height: 35%;
+  border-radius: 50%;
+  opacity: 0.8;
+}
+
+.cell-badge {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--teal);
+  color: white;
+  font-size: 8px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'SF Mono', monospace;
+  line-height: 1;
+}
+
+.cell-id {
+  font-size: 8px;
+  font-weight: 600;
+  font-family: 'SF Mono', monospace;
+  color: var(--text-muted);
+  line-height: 1;
+}
+.cell.dead .cell-id {
+  text-decoration: line-through;
+  opacity: 0.5;
+}

@@ -10,9 +10,18 @@ import (
 
 // Config is the top-level configuration loaded from morpho.json.
 type Config struct {
-	Provider ProviderConfig `json:"provider"`
-	Engine   EngineConfig   `json:"engine"`
-	Memory   MemoryConfig   `json:"memory"`
+	Provider   ProviderConfig    `json:"provider"`
+	Engine     EngineConfig      `json:"engine"`
+	Memory     MemoryConfig      `json:"memory"`
+	MCPServers []MCPServerConfig `json:"mcp_servers,omitempty"`
+}
+
+// MCPServerConfig describes an MCP server to connect to for additional tools.
+type MCPServerConfig struct {
+	Name    string            `json:"name"`
+	Command string            `json:"command"`
+	Args    []string          `json:"args"`
+	Env     map[string]string `json:"env,omitempty"`
 }
 
 // ProviderConfig selects and configures the LLM provider.
@@ -31,10 +40,10 @@ type EngineConfig struct {
 	SpawnPerTick  int     `json:"spawn_per_tick"`
 }
 
-// MemoryConfig controls agent memory behavior.
+// MemoryConfig controls memory behavior.
 type MemoryConfig struct {
-	ShortTermCapacity int    `json:"short_term_capacity"`
-	LongTermPath      string `json:"long_term_path"`
+	FactsPath  string `json:"facts_path"`
+	SessionDir string `json:"session_dir"`
 }
 
 // Load reads a config file from disk. Falls back to defaults if the file doesn't exist.
@@ -48,8 +57,8 @@ func Load(path string) (*Config, error) {
 			SpawnPerTick:  2,
 		},
 		Memory: MemoryConfig{
-			ShortTermCapacity: 20,
-			LongTermPath:      ".morpho_memory.json",
+			FactsPath:  ".morpho/facts.json",
+			SessionDir: ".morpho/sessions",
 		},
 	}
 

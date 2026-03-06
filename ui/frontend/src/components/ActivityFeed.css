@@ -1,0 +1,66 @@
+.activity-feed {
+  padding: 8px 12px;
+  max-height: 120px;
+  overflow-y: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-content: flex-start;
+  border-top: 1px solid var(--border-light);
+  background: var(--bg);
+}
+.activity-feed::-webkit-scrollbar { width: 3px; }
+.activity-feed::-webkit-scrollbar-thumb { background: var(--mint-200); border-radius: 2px; }
+
+.activity-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-family: 'SF Mono', monospace;
+  background: var(--bg-card);
+  border: 1px solid var(--border-light);
+  white-space: nowrap;
+  max-width: 220px;
+  overflow: hidden;
+}
+.act-icon {
+  flex-shrink: 0;
+  font-size: 10px;
+  width: 12px;
+  text-align: center;
+}
+.act-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Type colors */
+.activity-pill.spawn {
+  border-color: rgba(22, 163, 74, 0.2);
+  color: var(--green);
+}
+.activity-pill.diff {
+  border-color: rgba(202, 138, 4, 0.2);
+  color: var(--yellow);
+}
+.activity-pill.move {
+  border-color: rgba(234, 88, 12, 0.15);
+  color: var(--orange);
+}
+.activity-pill.done {
+  border-color: rgba(13, 148, 136, 0.2);
+  color: var(--teal);
+  font-weight: 500;
+}
+.activity-pill.death {
+  border-color: rgba(220, 38, 38, 0.15);
+  color: var(--red);
+  opacity: 0.6;
+}
+.activity-pill.divide {
+  border-color: rgba(124, 58, 237, 0.2);
+  color: var(--lavender);
+}

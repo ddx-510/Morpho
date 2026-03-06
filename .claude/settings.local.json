@@ -1,11 +1,23 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(go build:*)",
+      "Bash(git add:*)",
+      "Bash(go:*)",
+      "Bash(go run:*)",
+      "Bash(npm create:*)",
+      "Bash(npm install:*)",
+      "Bash(npm run:*)",
+      "mcp__playwright__browser_navigate",
+      "mcp__playwright__browser_take_screenshot",
+      "Bash(ls:*)",
+      "Bash(npx vite:*)",
+      "Bash(grep:*)",
+      "Bash(do echo:*)"
+    ]
+  },
   "enableAllProjectMcpServers": true,
   "enabledMcpjsonServers": [
     "autocheck"
-  ],
-  "permissions": {
-    "allow": [
-      "Bash(go build:*)"
-    ]
-  }
+  ]
 }

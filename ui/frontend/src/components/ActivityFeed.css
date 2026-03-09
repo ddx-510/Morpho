@@ -64,3 +64,8 @@
   border-color: rgba(124, 58, 237, 0.2);
   color: var(--lavender);
 }
+.activity-pill.info {
+  border-color: rgba(59, 130, 246, 0.2);
+  color: var(--text-secondary);
+  max-width: 320px;
+}

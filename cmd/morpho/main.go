@@ -15,6 +15,7 @@ func main() {
 	webMode := flag.Bool("web", false, "Serve chat UI on HTTP instead of terminal")
 	port := flag.String("port", "8390", "Web UI port")
 	workDir := flag.String("dir", ".", "Working directory for tools")
+	bench := flag.String("bench", "", "Run benchmark: morpho vs naive-parallel on given task")
 	flag.Parse()
 
 	cfg, err := config.Load(*configPath)
@@ -33,6 +34,11 @@ func main() {
 	app := chat.New(provider, cfg, *workDir)
 	app.Cron.Start()
 	defer app.Cron.Stop()
+
+	if *bench != "" {
+		runBenchmark(provider, cfg, *workDir, *bench)
+		return
+	}
 
 	if *webMode {
 		ui.ServeWeb(app, *port)

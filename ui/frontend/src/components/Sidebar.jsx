@@ -81,22 +81,20 @@ export default function Sidebar({ width, collapsed, onToggle, onDragStart }) {
     <div className={`sidebar ${collapsed ? 'collapsed' : ''}`} style={collapsed ? undefined : { width }}>
       <div className="sidebar-header">
         {!collapsed && (
-          <>
-            <div className="sidebar-logo">
-              <div className="sidebar-logo-icon"><Leaf size={16} /></div>
-              <h1>MORPHO</h1>
-            </div>
-            <button className="new-chat-btn" onClick={newSession} title="New chat">
-              <Plus size={16} />
-            </button>
-          </>
+          <div className="sidebar-logo">
+            <div className="sidebar-logo-icon"><Leaf size={16} /></div>
+            <h1>MORPHO</h1>
+          </div>
         )}
-        {collapsed && (
-          <button className="new-chat-btn" onClick={newSession} title="New chat" style={{ margin: '0 auto' }}>
-            <Plus size={16} />
-          </button>
-        )}
+        <button className="sidebar-toggle" onClick={onToggle} title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}>
+          {collapsed ? <PanelLeftOpen size={14} /> : <PanelLeftClose size={14} />}
+        </button>
       </div>
+
+      <button className="new-chat-btn" onClick={newSession} title="New chat">
+        <Plus size={14} />
+        {!collapsed && <span>New chat</span>}
+      </button>
 
       {!collapsed && (
         <div className="sessions-list">
@@ -164,11 +162,6 @@ export default function Sidebar({ width, collapsed, onToggle, onDragStart }) {
           ))}
         </div>
       )}
-
-      {/* Collapse toggle */}
-      <button className="sidebar-toggle" onClick={onToggle} title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}>
-        {collapsed ? <PanelLeftOpen size={14} /> : <PanelLeftClose size={14} />}
-      </button>
 
       {/* Drag handle for resize */}
       {!collapsed && <div className="sidebar-drag" onMouseDown={onDragStart} />}

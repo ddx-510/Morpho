@@ -200,6 +200,25 @@ func (app *App) HandleCommand(input string) string {
 		return app.handleSessionCommand(parts[1:])
 	case "/facts":
 		return app.handleFactsCommand(parts[1:])
+	case "/cd":
+		if len(parts) < 2 {
+			return fmt.Sprintf("working directory: %s\nusage: /cd <path>", app.WorkDir)
+		}
+		target := strings.Join(parts[1:], " ")
+		target = strings.Trim(target, "\"'`")
+		if strings.HasPrefix(target, "~/") {
+			if home, err := os.UserHomeDir(); err == nil {
+				target = filepath.Join(home, target[2:])
+			}
+		}
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(app.WorkDir, target)
+		}
+		if info, err := os.Stat(target); err != nil || !info.IsDir() {
+			return fmt.Sprintf("not a valid directory: %s", target)
+		}
+		app.WorkDir = target
+		return fmt.Sprintf("working directory changed to: %s", target)
 	case "/remember":
 		if len(parts) < 2 {
 			return "usage: /remember <fact>"
@@ -247,6 +266,10 @@ CRON
   /cron rm <id>                Remove a job
   /cron pause <id>             Pause a job
   /cron resume <id>            Resume a paused job
+
+DIRECTORY
+  /cd                   Show current working directory
+  /cd <path>            Change working directory for tools and swarm
 
 OTHER
   /help                 Show this help
@@ -514,7 +537,8 @@ Recent conversation:
 const maxAssistTurns = 30
 
 func (app *App) runAssist(msg, task string) string {
-	targetDir := resolveTargetDir(msg+" "+task, app.WorkDir)
+	targetDir := app.resolveTargetDir(msg + " " + task)
+	app.Bus.Emit(event.Event{Type: event.TargetDir, Content: targetDir})
 	tools := tool.DefaultRegistry(targetDir)
 	tool.RegisterSkills(tools, app.Provider)
 
@@ -579,7 +603,37 @@ Be concise and specific. Cite file paths and line numbers when relevant.`, soulC
 		})
 
 		for _, call := range resp.ToolCalls {
-			argsStr := fmt.Sprintf("%v", call.Args)
+			callID := call.ID
+			if callID == "" {
+				callCounter++
+				callID = fmt.Sprintf("call_%d", callCounter)
+			}
+
+			// Detect garbled tool arguments from the model
+			if parseErr, ok := call.Args["__parse_error"]; ok && parseErr == true {
+				rawArgs, _ := call.Args["__raw"].(string)
+				errMsg := fmt.Sprintf("error: invalid JSON in tool arguments. You sent: %s — please retry with valid JSON arguments.", truncate(rawArgs, 200))
+				app.Bus.Emit(event.Event{
+					Type: event.ToolUse,
+					Meta: map[string]string{"tool": call.Name, "args": rawArgs, "agent": "assist"},
+				})
+				app.addStep(memory.Step{Kind: "tool_use", Agent: "assist", Tool: call.Name, Args: truncate(rawArgs, 200)})
+				app.addStep(memory.Step{Kind: "tool_result", Agent: "assist", Tool: call.Name, Content: "error: invalid JSON arguments"})
+				app.Bus.Emit(event.Event{
+					Type:    event.ToolResult,
+					Content: "error: invalid JSON arguments",
+					Meta:    map[string]string{"tool": call.Name, "agent": "assist"},
+				})
+				messages = append(messages, llm.ChatMessage{
+					Role:       "tool",
+					Content:    errMsg,
+					ToolCallID: callID,
+				})
+				continue
+			}
+
+			argsJSON, _ := json.Marshal(call.Args)
+			argsStr := string(argsJSON)
 			app.Bus.Emit(event.Event{
 				Type: event.ToolUse,
 				Meta: map[string]string{
@@ -589,12 +643,6 @@ Be concise and specific. Cite file paths and line numbers when relevant.`, soulC
 				},
 			})
 			app.addStep(memory.Step{Kind: "tool_use", Agent: "assist", Tool: call.Name, Args: truncate(argsStr, 200)})
-
-			callID := call.ID
-			if callID == "" {
-				callCounter++
-				callID = fmt.Sprintf("call_%d", callCounter)
-			}
 
 			result := tools.ExecuteCall(call)
 			var resultStr string
@@ -629,7 +677,8 @@ Be concise and specific. Cite file paths and line numbers when relevant.`, soulC
 // ── Swarm tier ──────────────────────────────────────────────────────
 
 func (app *App) runSwarm(msg string) string {
-	targetDir := resolveTargetDir(msg, app.WorkDir)
+	targetDir := app.resolveTargetDir(msg)
+	app.Bus.Emit(event.Event{Type: event.TargetDir, Content: targetDir})
 
 	dom, err := domain.Auto(app.Provider, msg, targetDir)
 	if err != nil {
@@ -664,15 +713,23 @@ func (app *App) runSwarm(msg string) string {
 		roles.RolePrompts[r.Name] = r.Prompt
 	}
 
-	tools := dom.ToolBuilder(targetDir)
-	tool.RegisterSkills(tools, app.Provider)
+	allTools := dom.ToolBuilder(targetDir)
+	tool.RegisterSkills(allTools, app.Provider)
 	for _, mcpCfg := range app.Cfg.MCPServers {
-		tool.RegisterMCPTools(tools, tool.MCPServerConfig{
+		tool.RegisterMCPTools(allTools, tool.MCPServerConfig{
 			Name:    mcpCfg.Name,
 			Command: mcpCfg.Command,
 			Args:    mcpCfg.Args,
 			Env:     mcpCfg.Env,
 		})
+	}
+	// Swarm agents get read-only tools (no edit/write).
+	swarmTools := tool.ReadOnlyRegistry(allTools)
+
+	// Load markdown skills from project and morpho dirs.
+	skillLib, _ := tool.LoadSkillLibrary(filepath.Join(targetDir, "skills"))
+	if skillLib == nil {
+		skillLib, _ = tool.LoadSkillLibrary(filepath.Join(app.WorkDir, "skills"))
 	}
 
 	engCfg := agent.EngineConfig{
@@ -682,7 +739,8 @@ func (app *App) runSwarm(msg string) string {
 		Provider:      app.Provider,
 	}
 
-	eng := agent.NewEngine(f, engCfg, tools, roles)
+	eng := agent.NewEngine(f, engCfg, swarmTools, roles)
+	eng.Skills = skillLib
 	eng.Quiet()
 
 	factsCtx := app.relevantFacts(msg)
@@ -805,12 +863,60 @@ func (app *App) runSwarm(msg string) string {
 		fmt.Fprintf(&findingSummary, "%d. %s\n", i+1, f)
 	}
 
+	// Build cross-reference context: which regions found what, role distribution.
+	var metaCtx strings.Builder
+	fmt.Fprintf(&metaCtx, "## Analysis Metadata\n")
+	fmt.Fprintf(&metaCtx, "- Agents: %d spawned, %d died\n", result.AgentsTotal, result.AgentsDied)
+	fmt.Fprintf(&metaCtx, "- Duration: %s\n", result.Duration.Round(time.Millisecond))
+	fmt.Fprintf(&metaCtx, "- Regions analyzed: %d\n", len(result.ByPoint))
+	if len(result.ByRole) > 0 {
+		metaCtx.WriteString("- Findings by role: ")
+		for role, count := range result.ByRole {
+			fmt.Fprintf(&metaCtx, "%s(%d) ", role, count)
+		}
+		metaCtx.WriteString("\n")
+	}
+	if len(result.ByPoint) > 0 {
+		metaCtx.WriteString("- Findings by region: ")
+		for point, count := range result.ByPoint {
+			fmt.Fprintf(&metaCtx, "%s(%d) ", point, count)
+		}
+		metaCtx.WriteString("\n")
+	}
+	if len(result.Tissues) > 0 {
+		seen := map[string]bool{}
+		metaCtx.WriteString("- Tissue clusters: ")
+		for _, t := range result.Tissues {
+			if !seen[t] {
+				metaCtx.WriteString(t + "; ")
+				seen[t] = true
+			}
+		}
+		metaCtx.WriteString("\n")
+	}
+
 	resp := app.Provider.Generate(llm.Request{
-		SystemPrompt: `You are Morpho, summarizing findings from a multi-agent analysis.
-Organize the findings by category. Use markdown. Be concise but thorough.
-Include the most important/critical findings first.`,
-		UserPrompt: fmt.Sprintf("Task: %s\n\nRaw findings from %d specialist agents across %d regions in %s:\n\n%s",
-			msg, len(result.Findings), len(result.ByPoint), result.Duration.Round(time.Millisecond), findingSummary.String()),
+		SystemPrompt: `You are Morpho, synthesizing findings from a multi-agent morphogenetic analysis.
+
+Structure your response as a cross-referenced analysis:
+
+1. **Executive Summary** — 2-3 sentence overview of the most critical findings.
+
+2. **Critical Findings** — Issues that need immediate attention, grouped by severity.
+   For each finding: state what was found, where (file/region), and why it matters.
+
+3. **Cross-Cutting Patterns** — Patterns that appear across multiple regions.
+   Reference specific regions where the pattern was observed.
+
+4. **Regional Breakdown** — Brief per-region summary for regions with notable findings.
+
+5. **Recommendations** — Prioritized action items based on severity and impact.
+
+Use markdown. Be specific — cite file paths and regions. Cross-reference findings
+that relate to each other (e.g., "This connects to the auth issue in region X").
+Omit empty sections. Prioritize clarity over completeness.`,
+		UserPrompt: fmt.Sprintf("Task: %s\n\n%s\n\nRaw findings from %d specialist agents:\n\n%s",
+			msg, metaCtx.String(), len(result.Findings), findingSummary.String()),
 	})
 	if resp.Err != nil {
 		return agent.PrintReport(result)
@@ -836,58 +942,170 @@ func (app *App) soulSummary() string {
 	return "You are Morpho, an adaptive multi-agent assistant. You are helpful, concise, and direct."
 }
 
-func resolveTargetDir(msg, defaultDir string) string {
+
+// emitToolStep emits tool_use + tool_result events and records steps for directory resolution.
+func (app *App) emitToolStep(toolName string, args map[string]string, result string) {
+	argsJSON, _ := json.Marshal(args)
+	argsStr := string(argsJSON)
+	app.Bus.Emit(event.Event{
+		Type: event.ToolUse,
+		Meta: map[string]string{"tool": toolName, "args": argsStr, "agent": "router"},
+	})
+	app.addStep(memory.Step{Kind: "tool_use", Agent: "router", Tool: toolName, Args: truncate(argsStr, 200)})
+
+	resultPreview := truncate(result, 200)
+	app.Bus.Emit(event.Event{
+		Type:    event.ToolResult,
+		Content: resultPreview,
+		Meta:    map[string]string{"tool": toolName, "agent": "router"},
+	})
+	app.addStep(memory.Step{Kind: "tool_result", Agent: "router", Tool: toolName, Content: resultPreview})
+}
+
+// resolveTargetDir explores the filesystem to find the project directory the user is referring to.
+func (app *App) resolveTargetDir(msg string) string {
+	// First: check for explicit paths in the message
 	for _, word := range strings.Fields(msg) {
 		word = strings.Trim(word, "\"'`(),;:!?")
 		if word == "" {
 			continue
 		}
-
 		if strings.HasPrefix(word, "~/") {
 			if home, err := os.UserHomeDir(); err == nil {
 				expanded := filepath.Join(home, word[2:])
 				if info, err := os.Stat(expanded); err == nil && info.IsDir() {
+					app.emitToolStep("list_files", map[string]string{"path": expanded}, listDirShort(expanded))
 					return expanded
 				}
 			}
-			continue
 		}
-
 		if filepath.IsAbs(word) {
 			if info, err := os.Stat(word); err == nil && info.IsDir() {
+				app.emitToolStep("list_files", map[string]string{"path": word}, listDirShort(word))
 				return word
-			}
-			continue
-		}
-
-		candidate := filepath.Join(defaultDir, word)
-		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
-			return candidate
-		}
-
-		if home, err := os.UserHomeDir(); err == nil {
-			candidate = filepath.Join(home, word)
-			if info, err := os.Stat(candidate); err == nil && info.IsDir() {
-				return candidate
-			}
-			candidate = filepath.Join(home, "Desktop", word)
-			if info, err := os.Stat(candidate); err == nil && info.IsDir() {
-				return candidate
-			}
-			if entries, err := os.ReadDir(filepath.Join(home, "Desktop")); err == nil {
-				for _, e := range entries {
-					if !e.IsDir() {
-						continue
-					}
-					candidate = filepath.Join(home, "Desktop", e.Name(), word)
-					if info, err := os.Stat(candidate); err == nil && info.IsDir() {
-						return candidate
-					}
-				}
 			}
 		}
 	}
-	return defaultDir
+
+	// Scan common project roots, emitting tool events for each
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return app.WorkDir
+	}
+
+	roots := []string{
+		filepath.Join(home, "Desktop"),
+		filepath.Join(home, "Documents"),
+		filepath.Join(home, "Projects"),
+		filepath.Join(home, "projects"),
+		filepath.Join(home, "code"),
+		filepath.Join(home, "dev"),
+		filepath.Join(home, "src"),
+		filepath.Join(home, "repos"),
+	}
+
+	var projects []string
+	for _, root := range roots {
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			continue
+		}
+		var names []string
+		for _, e := range entries {
+			if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+				continue
+			}
+			names = append(names, e.Name())
+			dir := filepath.Join(root, e.Name())
+			projects = append(projects, dir)
+
+			// Scan one level deeper
+			subEntries, err := os.ReadDir(dir)
+			if err != nil {
+				continue
+			}
+			for _, se := range subEntries {
+				if !se.IsDir() || strings.HasPrefix(se.Name(), ".") {
+					continue
+				}
+				projects = append(projects, filepath.Join(dir, se.Name()))
+			}
+		}
+		if len(names) > 0 {
+			listing := strings.Join(names, " ")
+			if len(listing) > 200 {
+				listing = listing[:200] + "..."
+			}
+			app.emitToolStep("list_files", map[string]string{"path": root}, listing)
+		}
+	}
+
+	if len(projects) == 0 {
+		return app.WorkDir
+	}
+
+	// Cap the list to avoid huge prompts
+	if len(projects) > 80 {
+		projects = projects[:80]
+	}
+
+	// Ask the LLM to pick the right directory
+	var listing strings.Builder
+	for _, p := range projects {
+		fmt.Fprintf(&listing, "  %s\n", p)
+	}
+
+	app.emitToolStep("resolve_project", map[string]string{"candidates": fmt.Sprintf("%d directories", len(projects))}, "asking LLM to match...")
+
+	resp := app.Provider.Generate(llm.Request{
+		SystemPrompt: fmt.Sprintf(`You resolve project directories. Given a user message and a list of available directories, identify which project the user is referring to.
+
+Current working directory: %s
+
+Available project directories:
+%s
+Rules:
+- If the user mentions a specific project name, match it to the closest directory.
+- If the user says "this project", "the code", "entire project" etc. without naming one, return the current working directory.
+- Respond with ONLY the absolute path, nothing else. No quotes, no explanation.`, app.WorkDir, listing.String()),
+		UserPrompt: msg,
+	})
+
+	if resp.Err != nil {
+		return app.WorkDir
+	}
+
+	resolved := strings.TrimSpace(resp.Content)
+	resolved = strings.Trim(resolved, "\"'`")
+	if info, err := os.Stat(resolved); err == nil && info.IsDir() {
+		app.emitToolStep("list_files", map[string]string{"path": resolved}, listDirShort(resolved))
+		return resolved
+	}
+
+	return app.WorkDir
+}
+
+// listDirShort returns a short listing of a directory's contents.
+func listDirShort(dir string) string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "(error reading directory)"
+	}
+	if len(entries) == 0 {
+		return "(empty directory)"
+	}
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+		if len(names) >= 20 {
+			break
+		}
+	}
+	result := strings.Join(names, " ")
+	if len(entries) > 20 {
+		result += fmt.Sprintf(" ... (%d more)", len(entries)-20)
+	}
+	return result
 }
 
 func truncate(s string, n int) string {

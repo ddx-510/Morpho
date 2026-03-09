@@ -147,6 +147,11 @@ func ServeWeb(app *chat.App, port string) {
 		json.NewEncoder(w).Encode(facts)
 	})
 
+	http.HandleFunc("/api/workdir", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"dir": app.WorkDir})
+	})
+
 	http.HandleFunc("/api/sessions", func(w http.ResponseWriter, r *http.Request) {
 		sessions := app.Sessions.List()
 		w.Header().Set("Content-Type", "application/json")

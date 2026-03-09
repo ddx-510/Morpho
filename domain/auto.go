@@ -236,7 +236,8 @@ func preloadRegionContent(root, regionID string) string {
 	buf.WriteString("\n")
 
 	// Read files until budget exhausted.
-	const budget = 20000
+	// Higher budget = agents can analyze directly without tool calls.
+	const budget = 30000
 	sampled := 0
 	for _, rel := range files {
 		if buf.Len() > budget {

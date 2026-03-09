@@ -62,6 +62,11 @@ function AppInner() {
         }
       })
       .catch(() => {})
+
+    fetch('/api/workdir')
+      .then(r => r.json())
+      .then(data => dispatch({ type: 'SET_WORKDIR', payload: data.dir || '' }))
+      .catch(() => {})
   }, [dispatch])
 
   return (

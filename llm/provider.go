@@ -357,7 +357,10 @@ func parseOpenAI(data []byte) Response {
 	for _, tc := range result.Choices[0].Message.ToolCalls {
 		argsStr := repairJSONString(tc.Function.Arguments)
 		var args map[string]any
-		json.Unmarshal([]byte(argsStr), &args)
+		if err := json.Unmarshal([]byte(argsStr), &args); err != nil {
+			// Preserve the raw string so callers can detect parse failure
+			args = map[string]any{"__parse_error": true, "__raw": tc.Function.Arguments}
+		}
 		if args == nil {
 			args = make(map[string]any)
 		}
@@ -455,6 +458,7 @@ var (
 	reLineComment   = regexp.MustCompile(`(?m)//[^\n]*$`)
 	reBlockComment  = regexp.MustCompile(`/\*[\s\S]*?\*/`)
 	reTrailingComma = regexp.MustCompile(`,\s*([}\]])`)
+	reUnquotedValue = regexp.MustCompile(`(:\s*)([^"\s{}\[\],][^,}\]]*[^"\s,}\]])`)
 )
 
 // repairJSONString fixes common JSON issues from LLM output.
@@ -470,6 +474,9 @@ func repairJSONString(s string) string {
 
 	// Trailing commas.
 	s = reTrailingComma.ReplaceAllString(s, "$1")
+
+	// Unquoted string values: {"path": .} or {"path": foo/bar} → {"path": "."}
+	s = reUnquotedValue.ReplaceAllString(s, `$1"$2"`)
 
 	// Try to balance braces.
 	opens := strings.Count(s, "{") - strings.Count(s, "}")

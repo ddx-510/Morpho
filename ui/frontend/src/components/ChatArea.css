@@ -23,6 +23,17 @@
   color: var(--text);
   flex: 1;
 }
+.workdir-badge {
+  font-size: 11px;
+  font-family: 'SF Mono', monospace;
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: var(--bg-hover);
+}
 .badge {
   font-size: 10px;
   padding: 3px 10px;

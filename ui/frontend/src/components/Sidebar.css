@@ -39,46 +39,23 @@
   background: var(--mint-300);
 }
 
-/* ── Collapse toggle ── */
-.sidebar-toggle {
-  position: absolute;
-  bottom: 12px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 32px;
-  height: 32px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border-light);
-  background: var(--bg-card);
-  color: var(--text-muted);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.15s var(--ease);
-  z-index: 10;
-  padding: 0;
-}
-.sidebar-toggle:hover {
-  background: var(--bg-hover);
-  color: var(--mint-600);
-  border-color: var(--mint-300);
-}
-
+/* ── Header with logo + collapse toggle ── */
 .sidebar-header {
-  padding: 20px 16px 16px;
+  padding: 16px 12px 8px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
+  flex-shrink: 0;
 }
 .sidebar.collapsed .sidebar-header {
-  padding: 20px 8px 16px;
+  padding: 16px 8px 8px;
   justify-content: center;
 }
 .sidebar-logo {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex: 1;
 }
 .sidebar-logo-icon {
   width: 32px;
@@ -99,8 +76,30 @@
   font-family: 'SF Mono', 'Fira Code', monospace;
 }
 
+/* ── Collapse toggle (in header) ── */
+.sidebar-toggle {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s var(--ease);
+  padding: 0;
+  flex-shrink: 0;
+}
+.sidebar-toggle:hover {
+  background: var(--bg-hover);
+  color: var(--mint-600);
+}
+
+/* ── New chat button (fixed above list) ── */
 .new-chat-btn {
-  width: 34px;
+  margin: 4px 10px 8px;
   height: 34px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
@@ -110,8 +109,16 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 8px;
   transition: all 0.15s var(--ease);
   box-shadow: var(--shadow-sm);
+  font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
+  flex-shrink: 0;
+}
+.sidebar.collapsed .new-chat-btn {
+  margin: 4px 8px 8px;
 }
 .new-chat-btn:hover {
   background: var(--mint-500);
@@ -123,10 +130,10 @@
 .sessions-list {
   flex: 1;
   overflow-y: auto;
-  padding: 0 10px 48px;
+  padding: 0 10px 16px;
 }
 .collapsed-sessions {
-  padding: 0 6px 48px;
+  padding: 0 6px 16px;
 }
 .collapsed-sessions .session-item {
   justify-content: center;

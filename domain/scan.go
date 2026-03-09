@@ -1,9 +1,11 @@
 package domain
 
 import (
+	"bufio"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -45,17 +47,31 @@ func dirStats(root string) (map[string]*regionStats, error) {
 		groups = mergeSmallest(groups, maxRegions)
 	}
 
-	// Build links between regions.
+	// Build semantic links: scan imports to find cross-directory dependencies,
+	// then fall back to connecting all regions as neighbors.
+	importLinks := scanImportLinks(root, allFiles, groups)
+
 	ids := make([]string, 0, len(groups))
 	for id := range groups {
 		ids = append(ids, id)
 	}
 	for _, id := range ids {
-		var links []string
+		linkSet := map[string]bool{}
+		// Add import-based links first (semantic topology).
+		for _, linked := range importLinks[id] {
+			if linked != id {
+				linkSet[linked] = true
+			}
+		}
+		// Add structural neighbors (all other regions) as fallback.
 		for _, other := range ids {
 			if other != id {
-				links = append(links, other)
+				linkSet[other] = true
 			}
+		}
+		var links []string
+		for l := range linkSet {
+			links = append(links, l)
 		}
 		groups[id].Links = links
 	}
@@ -273,5 +289,99 @@ func mergeSmallest(groups map[string]*regionStats, target int) map[string]*regio
 		}
 	}
 
+	return result
+}
+
+// ── Semantic topology: import-based links ───────────────────────
+
+var reImport = regexp.MustCompile(
+	`(?m)` +
+		`(?:import\s+"([^"]+)")` + // Go: import "path"
+		`|(?:from\s+['"]([^'"]+)['"])` + // Python/JS: from "x" / from 'x'
+		`|(?:require\s*\(\s*['"]([^'"]+)['"]\s*\))`, // JS: require("x")
+)
+
+// scanImportLinks analyzes source files for import statements and maps
+// which regions import from which other regions. Creates semantic links.
+func scanImportLinks(root string, files []fileEntry, regions map[string]*regionStats) map[string][]string {
+	// Build mapping: file path → region.
+	fileToRegion := map[string]string{}
+	regionIDs := make([]string, 0, len(regions))
+	for id := range regions {
+		regionIDs = append(regionIDs, id)
+	}
+	// Sort longest first so deeper paths match before parents.
+	sort.Slice(regionIDs, func(i, j int) bool { return len(regionIDs[i]) > len(regionIDs[j]) })
+
+	for _, f := range files {
+		for _, rid := range regionIDs {
+			if rid == "." || strings.HasPrefix(f.rel, rid+"/") || filepath.Dir(f.rel) == rid {
+				fileToRegion[f.rel] = rid
+				break
+			}
+		}
+	}
+
+	links := map[string]map[string]bool{}
+	for _, rid := range regionIDs {
+		links[rid] = map[string]bool{}
+	}
+
+	for _, f := range files {
+		srcRegion, ok := fileToRegion[f.rel]
+		if !ok {
+			continue
+		}
+		ext := strings.ToLower(filepath.Ext(f.rel))
+		switch ext {
+		case ".go", ".py", ".js", ".jsx", ".ts", ".tsx", ".rs", ".java":
+		default:
+			continue
+		}
+
+		file, err := os.Open(filepath.Join(root, f.rel))
+		if err != nil {
+			continue
+		}
+		sc := bufio.NewScanner(file)
+		lineCount := 0
+		for sc.Scan() {
+			lineCount++
+			if lineCount > 50 {
+				break
+			}
+			matches := reImport.FindAllStringSubmatch(sc.Text(), -1)
+			for _, m := range matches {
+				importPath := ""
+				for _, sub := range m[1:] {
+					if sub != "" {
+						importPath = sub
+						break
+					}
+				}
+				if importPath == "" {
+					continue
+				}
+				for _, targetRegion := range regionIDs {
+					if targetRegion == srcRegion || targetRegion == "." {
+						continue
+					}
+					if strings.Contains(importPath, targetRegion) ||
+						strings.Contains(importPath, filepath.Base(targetRegion)) {
+						links[srcRegion][targetRegion] = true
+						links[targetRegion][srcRegion] = true
+					}
+				}
+			}
+		}
+		file.Close()
+	}
+
+	result := map[string][]string{}
+	for region, linked := range links {
+		for l := range linked {
+			result[region] = append(result[region], l)
+		}
+	}
 	return result
 }

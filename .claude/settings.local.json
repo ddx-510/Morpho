@@ -13,7 +13,12 @@
       "Bash(ls:*)",
       "Bash(npx vite:*)",
       "Bash(grep:*)",
-      "Bash(do echo:*)"
+      "Bash(do echo:*)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebSearch",
+      "Bash(git clone:*)",
+      "Bash(curl:*)"
     ]
   },
   "enableAllProjectMcpServers": true,

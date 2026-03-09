@@ -10,6 +10,8 @@ const initialState = {
   processing: false,
   strategy: null,
   steps: [],
+  preSteps: [],
+  workDir: '',
 }
 
 const initialSwarm = () => ({
@@ -82,6 +84,10 @@ function reducer(state, action) {
       return { ...state, messages: [...state.messages, action.payload] }
 
     case 'SET_MESSAGES':
+      // Preserve live swarm/processing state — they're driven by SSE, not session loads
+      if (state.processing || state.swarm) {
+        return { ...state, messages: action.payload }
+      }
       return { ...state, messages: action.payload, swarm: null, processing: false, strategy: null, steps: [] }
 
     case 'SET_SESSIONS':
@@ -94,7 +100,10 @@ function reducer(state, action) {
       return { ...state, strategy: action.payload }
 
     case 'CLEAR_STEPS':
-      return { ...state, steps: [] }
+      return { ...state, steps: [], preSteps: [] }
+
+    case 'SET_WORKDIR':
+      return { ...state, workDir: action.payload }
 
     case 'SSE_EVENT': {
       const ev = action.payload
@@ -104,6 +113,9 @@ function reducer(state, action) {
           // Build the assistant message with any live steps/swarm data attached
           // so persisted intermediate steps render inline immediately
           const msg = { role: 'assistant', content: ev.content }
+          if (state.preSteps.length > 0) {
+            msg.preSteps = [...state.preSteps]
+          }
           if (state.swarm) {
             msg.strategy = 'swarm'
             msg.steps = buildSwarmSteps(state.swarm)
@@ -122,6 +134,7 @@ function reducer(state, action) {
             processing: false,
             swarm: null,
             steps: [],
+            preSteps: [],
             strategy: null,
           }
         }
@@ -130,13 +143,25 @@ function reducer(state, action) {
           const match = ev.content?.match(/^\[(\w+)\]/)
           const strategy = match ? match[1] : state.strategy
           if (strategy === 'swarm' && !state.swarm) {
-            return { ...state, strategy, swarm: initialSwarm(), steps: [] }
+            // Move pre-swarm steps to preSteps, init swarm
+            const preSteps = [...state.preSteps, ...state.steps]
+            if (ev.content) {
+              preSteps.push({ kind: 'thinking', content: ev.content })
+            }
+            return { ...state, strategy, swarm: initialSwarm(), steps: [], preSteps }
           }
-          if (strategy !== 'swarm') {
-            return { ...state, strategy, steps: [...state.steps, { kind: 'thinking', content: ev.content }] }
+          if (strategy === 'swarm' && state.swarm) {
+            if (ev.content) {
+              return { ...state, preSteps: [...state.preSteps, { kind: 'thinking', content: ev.content }] }
+            }
+            return state
           }
-          return { ...state, strategy }
+          // All strategies: thinking goes to preSteps (visible inline), not steps
+          return { ...state, strategy, preSteps: [...state.preSteps, { kind: 'thinking', content: ev.content }] }
         }
+
+        case 'target_dir':
+          return { ...state, workDir: ev.content || state.workDir }
 
         case 'tick_start': {
           const swarm = state.swarm ? { ...state.swarm } : initialSwarm()
@@ -238,15 +263,19 @@ function reducer(state, action) {
           const agent = meta(ev, 'agent')
           const tool = meta(ev, 'tool')
           const args = meta(ev, 'args')
+          const argsShort = args.length > 80 ? args.substring(0, 80) + '...' : args
+          // Router tool calls go to preSteps (directory resolution)
+          if (agent === 'router') {
+            return { ...state, preSteps: [...state.preSteps, { kind: 'tool', tool, args: argsShort }] }
+          }
           if (!state.swarm) {
-            const argsShort = args.length > 80 ? args.substring(0, 80) + '...' : args
             return { ...state, steps: [...state.steps, { kind: 'tool', tool, args: argsShort }] }
           }
           if (agent) {
             const swarm = { ...state.swarm, agents: { ...state.swarm.agents } }
             const ag = getAgent(swarm, agent)
-            const argsShort = args.length > 60 ? args.substring(0, 60) + '...' : args
-            ag.events = [...ag.events, { type: 'tool', tool, args: argsShort }]
+            const argsShort60 = args.length > 60 ? args.substring(0, 60) + '...' : args
+            ag.events = [...ag.events, { type: 'tool', tool, args: argsShort60 }]
             return { ...state, swarm }
           }
           return state
@@ -254,14 +283,17 @@ function reducer(state, action) {
 
         case 'tool_result': {
           const agent = meta(ev, 'agent')
-          if (!state.swarm && !agent) {
-            const short = ev.content?.length > 120 ? ev.content.substring(0, 120) + '...' : (ev.content || '')
+          const short = ev.content?.length > 120 ? ev.content.substring(0, 120) + '...' : (ev.content || '')
+          // Router tool results go to preSteps
+          if (agent === 'router') {
+            return { ...state, preSteps: [...state.preSteps, { kind: 'result', content: short }] }
+          }
+          if (!state.swarm) {
             return { ...state, steps: [...state.steps, { kind: 'result', content: short }] }
           }
-          if (state.swarm && agent) {
+          if (agent) {
             const swarm = { ...state.swarm, agents: { ...state.swarm.agents } }
             const ag = getAgent(swarm, agent)
-            const short = ev.content?.length > 120 ? ev.content.substring(0, 120) + '...' : (ev.content || '')
             ag.events = [...ag.events, { type: 'tool-result', content: short }]
             return { ...state, swarm }
           }

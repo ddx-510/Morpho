@@ -110,6 +110,18 @@ func truncate(s string, n int) string {
 	return s[:n] + "..."
 }
 
+// ReadOnlyRegistry creates a copy of a registry with write tools removed (safe for swarm agents).
+func ReadOnlyRegistry(base *Registry) *Registry {
+	r := NewRegistry()
+	writeDeny := map[string]bool{"edit_file": true, "patch_file": true, "write_file": true}
+	for _, t := range base.All() {
+		if !writeDeny[t.Name()] {
+			r.Register(t)
+		}
+	}
+	return r
+}
+
 // StringArg extracts a string argument from the args map.
 func StringArg(args map[string]any, key string) string {
 	v, ok := args[key]

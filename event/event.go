@@ -29,6 +29,7 @@ const (
 	Thinking     Type = "thinking"
 	ToolUse      Type = "tool_use"
 	ToolResult   Type = "tool_result"
+	TargetDir    Type = "target_dir"
 )
 
 // Event is a unified event emitted during chat and morpho runs.

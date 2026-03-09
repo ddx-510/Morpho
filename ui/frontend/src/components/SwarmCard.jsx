@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Zap, Grid3X3, Map, HelpCircle } from 'lucide-react'
+import { Zap, Grid3X3, Map, HelpCircle, Microscope, Heart, Brain, Hash, Clock, Coins } from 'lucide-react'
 import { useStore } from '../store'
 import OrganismTank from './OrganismTank'
 import FieldView from './FieldView'
@@ -134,33 +134,39 @@ export default function SwarmCard({ steps }) {
 
       <div className="swarm-stats-bar">
         <div className="stat-item findings">
+          <Microscope size={12} />
           <span className="stat-val">{findingsCount}</span>
           <span className="stat-label">Findings</span>
         </div>
         <div className="stat-item alive">
+          <Heart size={12} />
           <span className="stat-val">{persisted ? `${aliveCount}/${agentCount}` : aliveCount}</span>
           <span className="stat-label">{persisted ? 'Agents' : 'Alive'}</span>
         </div>
         {workingCount > 0 && (
           <div className="stat-item working">
+            <Brain size={12} />
             <span className="stat-val">{workingCount}</span>
             <span className="stat-label">Working</span>
           </div>
         )}
         {!persisted && (
           <div className="stat-item tick">
+            <Hash size={11} />
             <span className="stat-val">{swarm.cycle || 0}</span>
             <span className="stat-label">Tick</span>
           </div>
         )}
         {swarm.elapsed && !persisted && (
           <div className="stat-item elapsed">
+            <Clock size={11} />
             <span className="stat-val">{swarm.elapsed}</span>
             <span className="stat-label">Elapsed</span>
           </div>
         )}
         {(swarm.tokens || 0) > 0 && (
           <div className="stat-item tokens">
+            <Coins size={12} />
             <span className="stat-val">{formatTokens(swarm.tokens)}</span>
             <span className="stat-label">Tokens</span>
           </div>

@@ -90,8 +90,9 @@ type Engine struct {
 	Agents   []*Agent
 	Detector *TissueDetector
 	Config   EngineConfig
-	Tools *tool.Registry
-	Roles *RoleMapping
+	Tools  *tool.Registry
+	Roles  *RoleMapping
+	Skills *tool.SkillLibrary // markdown skills, nil-safe
 
 	tick        int
 	agentID     int
@@ -173,6 +174,8 @@ func (e *Engine) Run() RunResult {
 
 		e.stepAgents()
 		e.stepRecruitment()
+
+		e.stepPropagate() // cross-region knowledge propagation
 
 		e.Field.Decay(e.Config.DecayRate)
 		e.Field.Diffuse(e.Config.DiffusionRate)
@@ -369,6 +372,18 @@ func (e *Engine) stepAgents() {
 		for _, ev := range tr.Events {
 			switch ev.Kind {
 			case "differentiate":
+				// Inject markdown skills for the agent's new role.
+				if e.Skills != nil {
+					skills := e.Skills.ForRole(ev.Detail)
+					if len(skills) > 0 {
+						var sb strings.Builder
+						sb.WriteString("SKILLS & METHODOLOGY:\n")
+						for _, s := range skills {
+							sb.WriteString("### " + s.Name + "\n" + s.Content + "\n\n")
+						}
+						a.ContextHint += "\n\n" + sb.String()
+					}
+				}
 				e.log(fmt.Sprintf("  %s -> %s at %s", a.ID, ev.Detail, a.PointID))
 				e.progress(ProgressEvent{Kind: "differentiate", Tick: e.tick, Agent: a.ID, Role: ev.Detail, Point: a.PointID})
 			case "move":
@@ -391,10 +406,12 @@ func (e *Engine) stepAgents() {
 		}
 
 		if tr.Work != "" {
-			e.result.Findings = append(e.result.Findings, tr.Work)
-			e.result.ByRole[string(a.Role)]++
-			e.result.ByPoint[a.PointID]++
-			e.log(fmt.Sprintf("  %s", engTruncate(tr.Work, 120)))
+			// Split agent output into individual findings (bullet points).
+			individual := splitFindings(tr.Work)
+			e.result.Findings = append(e.result.Findings, individual...)
+			e.result.ByRole[string(a.Role)] += len(individual)
+			e.result.ByPoint[a.PointID] += len(individual)
+			e.log(fmt.Sprintf("  %s (%d findings)", engTruncate(tr.Work, 100), len(individual)))
 		}
 	}
 
@@ -430,6 +447,45 @@ func (e *Engine) stepRecruitment() {
 				a := e.spawnAt(pid, totalSignal)
 				_ = a
 				e.log(fmt.Sprintf("  recruited stem cell at %s (nutrient=%.2f)", pid, nutrient))
+			}
+		}
+	}
+}
+
+// ── Cross-region knowledge propagation ──────────────────────────────
+
+// stepPropagate spreads finding digests to linked regions.
+// This is the key morphogenetic behavior: knowledge doesn't stay local,
+// it diffuses through the field topology (import-based links).
+func (e *Engine) stepPropagate() {
+	// Track what we've already propagated to avoid duplicates.
+	type propKey struct{ finding, target string }
+	propagated := map[propKey]bool{}
+
+	for _, pid := range e.Field.Points() {
+		pt, ok := e.Field.FieldPoint(pid)
+		if !ok || len(pt.Findings) == 0 || len(pt.Links) == 0 {
+			continue
+		}
+		// Only propagate findings from this tick (avoid re-propagating old ones).
+		// We tag propagated findings with [from:region] so we can detect them.
+		for _, finding := range pt.Findings {
+			if strings.HasPrefix(finding, "[from:") || strings.HasPrefix(finding, "[prior]") {
+				continue // already propagated or from prior session
+			}
+			// Create a short digest (first 150 chars).
+			digest := finding
+			if len(digest) > 150 {
+				digest = digest[:150] + "..."
+			}
+			tagged := fmt.Sprintf("[from:%s] %s", pid, digest)
+			for _, linkID := range pt.Links {
+				key := propKey{finding: digest, target: linkID}
+				if propagated[key] {
+					continue
+				}
+				propagated[key] = true
+				e.Field.DepositFinding(linkID, tagged)
 			}
 		}
 	}
@@ -556,4 +612,27 @@ func engTruncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "..."
+}
+
+// splitFindings splits an agent's work output into individual findings.
+// Looks for numbered items (1. 2. 3.) or bullet points (- *).
+func splitFindings(work string) []string {
+	var findings []string
+	for _, line := range strings.Split(work, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		// Numbered findings: "1. ...", "2. ..."
+		if len(line) > 2 && line[0] >= '1' && line[0] <= '9' && (line[1] == '.' || (line[1] >= '0' && line[1] <= '9' && len(line) > 3 && line[2] == '.')) {
+			findings = append(findings, line)
+		} else if strings.HasPrefix(line, "- ") || strings.HasPrefix(line, "* ") {
+			findings = append(findings, line)
+		}
+	}
+	if len(findings) == 0 && len(work) > 20 {
+		// No structured findings — count the whole output as one.
+		findings = append(findings, work)
+	}
+	return findings
 }

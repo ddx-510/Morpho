@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { marked } from 'marked'
-import { Send, Leaf, Sparkles } from 'lucide-react'
+import { Send, Leaf, Sparkles, Folder } from 'lucide-react'
 import { useStore } from '../store'
 import MorphoMessage from './MorphoMessage'
 import SwarmCard from './SwarmCard'
@@ -68,15 +68,21 @@ export default function ChatArea() {
   ) : null
 
   // Find where to insert live content
-  const liveInsertIdx = (state.swarm || state.steps.length > 0 || state.processing)
+  const liveInsertIdx = (state.swarm || state.steps.length > 0 || state.preSteps.length > 0 || state.processing)
     ? findLastUserIdx(state.messages) : -1
 
-  const hasMessages = state.messages.length > 0 || state.swarm || state.steps.length > 0
+  const hasMessages = state.messages.length > 0 || state.swarm || state.steps.length > 0 || state.preSteps.length > 0
 
   return (
     <div className="main">
       <div className="chat-header">
         <span className="title">Morpho</span>
+        {state.workDir && (
+          <span className="workdir-badge" title={state.workDir}>
+            <Folder size={11} />
+            {state.workDir.split('/').slice(-2).join('/')}
+          </span>
+        )}
         {strategyBadge}
       </div>
 
@@ -94,6 +100,13 @@ export default function ChatArea() {
           <div className="messages-inner">
             {state.messages.map((msg, i) => (
               <React.Fragment key={i}>
+                {/* Persisted pre-steps (directory resolution etc.) */}
+                {msg.role === 'assistant' && msg.preSteps && msg.preSteps.length > 0 && (
+                  <MorphoMessage label="working">
+                    <StepGroup steps={msg.preSteps} />
+                  </MorphoMessage>
+                )}
+
                 {/* Persisted intermediate steps before assistant response */}
                 {msg.role === 'assistant' && msg.steps && msg.steps.length > 0 && (
                   <MorphoMessage label={msg.strategy === 'swarm' ? 'swarm' : 'working'}>
@@ -126,6 +139,11 @@ export default function ChatArea() {
                 {/* Live content after the triggering user message */}
                 {i === liveInsertIdx && (
                   <>
+                    {state.preSteps.length > 0 && (
+                      <MorphoMessage label="working">
+                        <StepGroup steps={state.preSteps} />
+                      </MorphoMessage>
+                    )}
                     {state.swarm && (
                       <MorphoMessage label="swarm">
                         <SwarmCard />
@@ -154,6 +172,13 @@ export default function ChatArea() {
             {/* Fallback: live content when no messages yet */}
             {liveInsertIdx === -1 && (
               <>
+                {state.preSteps.length > 0 && (
+                  <div className="pre-steps">
+                    {state.preSteps.map((s, j) => (
+                      <div key={j} className="pre-step-line">{s.content}</div>
+                    ))}
+                  </div>
+                )}
                 {state.swarm && (
                   <MorphoMessage label="swarm">
                     <SwarmCard />

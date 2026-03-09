@@ -11,6 +11,7 @@ const (
 	Saturation = "saturation" // role-keyed, discourages redundant work
 	Distress   = "distress"   // spreads fast, recruits help, triggers division
 	Nutrient   = "nutrient"   // released on death, triggers recruitment
+	Discovery  = "discovery"  // emitted when agent finds something significant, attracts investigators
 )
 
 // Keyed returns a role-specific chemical key, e.g. "presence:bug_hunter".

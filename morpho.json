@@ -2,7 +2,7 @@
   "provider": {
     "type": "openai",
     "api_key": "quotio-local-B4B136D0-F83D-4D17-B950-5BB0947D0611",
-    "model": "gpt-5-codex-mini",
+    "model": "gemini-2.5-flash",
     "base_url": "http://127.0.0.1:8317/v1"
   },
   "engine": {

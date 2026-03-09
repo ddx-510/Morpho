@@ -6,6 +6,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"strings"
@@ -112,7 +113,9 @@ type Agent struct {
 
 	// ToolHook is called whenever the agent invokes a tool during work.
 	ToolHook   func(agentID, toolName, args, result string)
-	lastTokens int // tokens from most recent LLM call
+	lastTokens int    // tokens from most recent LLM call
+	Emerged    bool   // true after agent has self-refined its role
+	Focus      string // emergent focus area discovered during work
 }
 
 // New creates an undifferentiated agent at the given point.
@@ -289,6 +292,7 @@ func (a *Agent) chemotaxis(f *GradientField, pt Point, targetSig Signal) string 
 		val += linked.Chemicals[Distress] * 0.3
 		val -= linked.Chemicals[presKey] * 0.3
 		val += linked.Chemicals[Nutrient] * 0.2
+		val += linked.Chemicals[Discovery] * 0.4 // attracted to discoveries
 
 		if val > bestVal {
 			bestVal = val
@@ -339,7 +343,22 @@ func (a *Agent) tickWorking(f *GradientField, pt Point, result *TickResult) {
 			Amount:   localVal * 0.3,
 		})
 	}
-	if localVal > 0.7 {
+
+	// Discovery-driven signal amplification: findings boost local signals,
+	// attracting more agents to regions where important issues are found.
+	severity := classifyFindingSeverity(work)
+	if severity > 0.3 {
+		// Amplify base signal — this region needs more attention.
+		f.AddSignal(a.PointID, targetSig, severity*0.2)
+		// Emit discovery chemical — attracts agents from neighboring regions.
+		result.Emissions = append(result.Emissions, ChemEmission{
+			PointID:  a.PointID,
+			Chemical: Discovery,
+			Amount:   severity * 0.4,
+		})
+	}
+
+	if severity > 0.7 || localVal > 0.7 {
 		result.Emissions = append(result.Emissions, ChemEmission{
 			PointID:  a.PointID,
 			Chemical: Distress,
@@ -437,25 +456,50 @@ func (a *Agent) divide() *Agent {
 	}
 }
 
-// ── Work (stigmergic analysis) ────────────────────────────────────
-//
-// Morphogenetic work: agents don't independently tool-loop.
-// Instead, they read pre-loaded content from the field (stigmergy),
-// see what other agents already found, do ONE focused LLM call,
-// and deposit their findings back into the field for others to see.
+// ── Graded effort ────────────────────────────────────────────────
+
+// effortBudget maps signal strength to max tool-call iterations.
+// Low signal = quick scan, high signal = deep investigation.
+func effortBudget(signalStrength float64) int {
+	switch {
+	case signalStrength >= 0.6:
+		return 6 // deep investigation (code already pre-loaded)
+	case signalStrength >= 0.3:
+		return 4 // moderate
+	default:
+		return 2 // quick scan
+	}
+}
+
+// classifyFindingSeverity estimates severity from agent output text (no LLM call).
+func classifyFindingSeverity(work string) float64 {
+	upper := strings.ToUpper(work)
+	var sev float64
+	switch {
+	case strings.Contains(upper, "CRITICAL"):
+		sev = 0.9
+	case strings.Contains(upper, "HIGH"):
+		sev = 0.7
+	case strings.Contains(upper, "MEDIUM"):
+		sev = 0.4
+	case strings.Contains(upper, "LOW"):
+		sev = 0.2
+	}
+	// More findings = higher severity
+	count := strings.Count(work, "\n")
+	countSev := math.Min(float64(count)*0.05, 0.8)
+	if countSev > sev {
+		sev = countSev
+	}
+	return sev
+}
+
+// ── Work (multi-turn tool-calling with stigmergic context) ──────
 
 func (a *Agent) doWork(pt Point, targetSig Signal, localVal float64) string {
-	// 1. Get content from the field (pre-loaded at seeding time).
-	regionContent := pt.Content
-	if regionContent == "" {
-		// Fallback: read files via tools if field has no content.
-		regionContent = a.readRegionFiles()
-	}
-	if regionContent == "" {
-		regionContent = "(no content available for this region)"
-	}
+	budget := effortBudget(localVal)
 
-	// 2. Build context from existing findings at this point (stigmergy).
+	// Build context from existing findings (stigmergy).
 	existingFindings := ""
 	if len(pt.Findings) > 0 {
 		var fb strings.Builder
@@ -466,25 +510,38 @@ func (a *Agent) doWork(pt Point, targetSig Signal, localVal float64) string {
 		existingFindings = fb.String()
 	}
 
-	// 3. Build system prompt.
+	// Build system prompt.
 	var systemPrompt string
 	if tmpl, ok := a.roles.RolePrompts[a.Role]; ok && tmpl != "" {
-		systemPrompt = expandTemplate(tmpl, a.PointID, localVal, regionContent)
+		systemPrompt = expandTemplate(tmpl, a.PointID, localVal, pt.Content)
 	} else {
-		systemPrompt = fmt.Sprintf(`You are a %s specialist analyzing the "%s" region.
-Signal %s = %.2f (0=fine, 1=critical).
-
-%s`, a.Role, a.PointID, targetSig, localVal, regionContent)
+		systemPrompt = fmt.Sprintf("You are a %s specialist analyzing the \"%s\" region.\nSignal %s = %.2f (0=fine, 1=critical).",
+			a.Role, a.PointID, targetSig, localVal)
 	}
 
-	systemPrompt += `
+	// Include pre-loaded content — this IS the region data, agents don't need to re-fetch it.
+	if pt.Content != "" {
+		systemPrompt += "\n\nREGION SOURCE CODE (already loaded — DO NOT use list_files or read_file for files shown below):\n" + truncateStr(pt.Content, 12000)
+	}
 
-WORK INSTRUCTIONS:
-1. Analyze the code/content provided above for issues relevant to your role.
-2. Output a numbered findings list with severity (Critical/High/Medium/Low).
-3. Be specific — reference file names and line numbers where possible.
-4. NEVER refuse or say the task is too large. Always produce findings.
-5. Focus on NEW insights — do not repeat existing findings.`
+	// Emergent focus: on first work cycle, agent refines its specialization.
+	emergentInstruction := ""
+	if !a.Emerged {
+		emergentInstruction = `
+8. IMPORTANT — EMERGENT FOCUS: This is your first investigation of this region.
+   As you explore, identify what specific aspect needs the most attention.
+   Start your response with [FOCUS: specific_area] (e.g. [FOCUS: SQL injection in query builders]).
+   This helps the swarm understand what you discovered and allocate effort.`
+	} else if a.Focus != "" {
+		systemPrompt += fmt.Sprintf("\n\nYour discovered focus area: %s — dig deeper into this.", a.Focus)
+	}
+
+	systemPrompt += fmt.Sprintf(`
+
+INSTRUCTIONS:
+1. Analyze the source code above directly. Output a numbered findings list.
+2. Each finding: severity (Critical/High/Medium/Low), file:line, description.
+3. Do NOT repeat existing findings. Do NOT refuse.%s`, emergentInstruction)
 
 	if existingFindings != "" {
 		systemPrompt += "\n\n" + existingFindings
@@ -493,23 +550,148 @@ WORK INSTRUCTIONS:
 		systemPrompt += "\n\n" + a.ContextHint
 	}
 
-	// 4. ONE focused LLM call — no multi-turn tool loop.
-	resp := a.provider.Generate(llm.Request{
-		SystemPrompt: systemPrompt,
-		UserPrompt:   fmt.Sprintf("Analyze the \"%s\" region for %s issues. Produce a numbered findings list.", a.PointID, a.Role),
-	})
-	a.lastTokens = resp.Tokens.Total
-	if resp.Err != nil {
-		return ""
-	}
-	content := resp.Content
-	if content == "" {
-		return ""
+	userPrompt := fmt.Sprintf("Investigate the \"%s\" region for %s issues. Produce a numbered findings list.", a.PointID, a.Role)
+
+	// If content is pre-loaded (>500 chars), use a single LLM call — no tool overhead.
+	// Tools are only valuable when the agent needs to explore beyond what's pre-loaded.
+	if len(pt.Content) > 500 {
+		return a.doWorkSingleCall(systemPrompt, userPrompt)
 	}
 
-	work := fmt.Sprintf("[%s@%s] %s: %s", a.ID, a.PointID, a.Role, content)
+	// No pre-loaded content — use multi-turn tool loop to explore.
+	if a.tools == nil || len(a.tools.All()) == 0 {
+		return a.doWorkSingleCall(systemPrompt, userPrompt)
+	}
+
+	// Multi-turn tool loop — the agent explores its region with tools.
+	messages := []llm.ChatMessage{
+		{Role: "system", Content: systemPrompt},
+		{Role: "user", Content: userPrompt},
+	}
+	toolSpecs := a.tools.ToLLMSpecs()
+	totalTokens := 0
+	callCounter := 0
+
+	for turn := 0; turn < budget; turn++ {
+		resp := a.provider.Generate(llm.Request{
+			Messages: messages,
+			Tools:    toolSpecs,
+		})
+		totalTokens += resp.Tokens.Total
+
+		if resp.Err != nil {
+			break
+		}
+		if len(resp.ToolCalls) == 0 {
+			// Final response — this is the finding.
+			a.lastTokens = totalTokens
+			if resp.Content == "" {
+				return ""
+			}
+			a.extractFocus(resp.Content)
+			work := fmt.Sprintf("[%s@%s] %s: %s", a.ID, a.PointID, a.Role, resp.Content)
+			a.WorkLog = append(a.WorkLog, work)
+			return work
+		}
+
+		// Append assistant message with tool calls.
+		messages = append(messages, llm.ChatMessage{
+			Role:      "assistant",
+			Content:   resp.Content,
+			ToolCalls: resp.ToolCalls,
+		})
+
+		// Execute each tool call.
+		for _, call := range resp.ToolCalls {
+			// Handle garbled args from model.
+			if parseErr, ok := call.Args["__parse_error"]; ok && parseErr == true {
+				rawArgs, _ := call.Args["__raw"].(string)
+				callCounter++
+				callID := call.ID
+				if callID == "" {
+					callID = fmt.Sprintf("call_%d", callCounter)
+				}
+				messages = append(messages, llm.ChatMessage{
+					Role:       "tool",
+					Content:    fmt.Sprintf("error: invalid JSON arguments: %s — retry with valid JSON", truncateStr(rawArgs, 100)),
+					ToolCallID: callID,
+				})
+				continue
+			}
+
+			result := a.tools.ExecuteCall(call)
+			resultStr := result.Output
+			if result.Err != nil {
+				resultStr = "error: " + result.Err.Error()
+			}
+			if len(resultStr) > 2000 {
+				resultStr = resultStr[:2000] + "\n...(truncated)"
+			}
+
+			// Emit tool progress via hook.
+			if a.ToolHook != nil {
+				argsJSON, _ := json.Marshal(call.Args)
+				a.ToolHook(a.ID, call.Name, string(argsJSON), resultStr)
+			}
+
+			callCounter++
+			callID := call.ID
+			if callID == "" {
+				callID = fmt.Sprintf("call_%d", callCounter)
+			}
+			messages = append(messages, llm.ChatMessage{
+				Role:       "tool",
+				Content:    resultStr,
+				ToolCallID: callID,
+			})
+		}
+	}
+
+	// Hit budget limit — ask for final findings without tools.
+	messages = append(messages, llm.ChatMessage{
+		Role:    "user",
+		Content: "Budget reached. Summarize your findings now as a numbered list with severity levels.",
+	})
+	resp := a.provider.Generate(llm.Request{Messages: messages})
+	totalTokens += resp.Tokens.Total
+	a.lastTokens = totalTokens
+
+	if resp.Err != nil || resp.Content == "" {
+		return ""
+	}
+	work := fmt.Sprintf("[%s@%s] %s: %s", a.ID, a.PointID, a.Role, resp.Content)
 	a.WorkLog = append(a.WorkLog, work)
 	return work
+}
+
+// doWorkSingleCall is the fallback for domains without tools.
+func (a *Agent) doWorkSingleCall(systemPrompt, userPrompt string) string {
+	resp := a.provider.Generate(llm.Request{
+		SystemPrompt: systemPrompt,
+		UserPrompt:   userPrompt,
+	})
+	a.lastTokens = resp.Tokens.Total
+	if resp.Err != nil || resp.Content == "" {
+		return ""
+	}
+	a.extractFocus(resp.Content)
+	work := fmt.Sprintf("[%s@%s] %s: %s", a.ID, a.PointID, a.Role, resp.Content)
+	a.WorkLog = append(a.WorkLog, work)
+	return work
+}
+
+// extractFocus parses [FOCUS: ...] from agent output and stores it.
+func (a *Agent) extractFocus(content string) {
+	if a.Emerged {
+		return
+	}
+	a.Emerged = true
+	if idx := strings.Index(content, "[FOCUS:"); idx >= 0 {
+		end := strings.Index(content[idx:], "]")
+		if end > 0 {
+			a.Focus = strings.TrimSpace(content[idx+7 : idx+end])
+		}
+	}
 }
 
 func truncateStr(s string, n int) string {
@@ -517,48 +699,6 @@ func truncateStr(s string, n int) string {
 		return s
 	}
 	return s[:n] + "..."
-}
-
-// ── Helpers ─────────────────────────────────────────────────────────
-
-func (a *Agent) readRegionFiles() string {
-	if a.tools == nil {
-		return ""
-	}
-	listTool, ok := a.tools.Get("list_files")
-	if !ok {
-		return ""
-	}
-	listResult := listTool.Execute(map[string]any{"path": a.PointID})
-	if listResult.Err != nil || listResult.Output == "" || listResult.Output == "(empty directory)" {
-		return ""
-	}
-	readTool, ok := a.tools.Get("read_file")
-	if !ok {
-		return ""
-	}
-
-	var buf strings.Builder
-	const maxTotal = 24000
-	for _, file := range strings.Split(listResult.Output, "\n") {
-		file = strings.TrimSpace(file)
-		if file == "" {
-			continue
-		}
-		result := readTool.Execute(map[string]any{"path": file})
-		if result.Err == nil && result.Output != "" {
-			content := result.Output
-			if len(content) > 3000 {
-				content = content[:3000] + "\n... (truncated)"
-			}
-			fmt.Fprintf(&buf, "=== %s ===\n%s\n\n", file, content)
-			if buf.Len() > maxTotal {
-				buf.WriteString("... (remaining files omitted)\n")
-				break
-			}
-		}
-	}
-	return buf.String()
 }
 
 func expandTemplate(tmpl string, region string, value float64, code string) string {

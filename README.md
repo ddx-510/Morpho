@@ -183,16 +183,14 @@ Morpho includes a built-in benchmark comparing the morphogenetic swarm against n
 
 ### Results: Security Vulnerability Analysis
 
-| Project | | Findings | Regions | Tokens | Time | Tokens/Finding |
-|---------|---|---------|---------|--------|------|---------------|
-| **[Gogs](https://github.com/gogs/gogs)** | Naive | 37 | 4 | 87K | 52s | 2,358 |
-| *(Go, 85K LOC)* | **Morpho** | **188 (5.1x)** | **17** | 921K | 4m42s | 4,896 |
-| **[Juice Shop](https://github.com/juice-shop/juice-shop)** | Naive | 80 | 6 | 81K | 38s | 1,008 |
-| *(JS, 48K LOC)* | **Morpho** | **276 (3.5x)** | **19** | 1.1M | 4m46s | 4,075 |
-| **[Saleor](https://github.com/saleor/saleor)** | Naive | 46 | 4 | 127K | 21s | 2,766 |
-| *(Python, 210K LOC)* | **Morpho** | **331 (7.2x)** | **21** | 1.5M | 3m18s | 4,458 |
+| Project | | Findings | Unique | Regions | Tokens | Time | Tok/Finding |
+|---------|---|---------|--------|---------|--------|------|-------------|
+| **[Gogs](https://github.com/gogs/gogs)** | Naive | 84 | 77 | 6 | 54K | 27s | 640 |
+| *(Go, 85K LOC)* | **Morpho** | **147** | **129** | **18** | 372K | 2m59s | 2,527 |
+| **[Saleor](https://github.com/saleor/saleor)** | Naive | 80 | 76 | 7 | 48K | 43s | 602 |
+| *(Python, 210K LOC)* | **Morpho** | **131** | **116** | **18** | 298K | 2m17s | 2,277 |
 
-**Average: 5.3x more findings, 4.3x more region coverage.** Morpho uses ~2x more tokens per finding but finds 3.5-7.2x more issues — a strong ROI for thoroughness over speed.
+**Morpho finds 1.5-1.8x more unique findings while covering 2.6-3x more regions.** The cost is ~4x more tokens per finding — but those tokens buy broader coverage, cross-region insights, and emergent specialization that isolated agents miss.
 
 The naive baseline gives each region its own agent with the same pre-loaded code — it's already a strong approach. Morpho's advantage comes from:
 - **Adaptive coverage** — agents migrate to under-explored regions via chemotaxis

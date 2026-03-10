@@ -227,17 +227,9 @@ func preloadRegionContent(root, regionID string) string {
 		return "(no source files)"
 	}
 
-	// Build listing + read a sample of files.
+	// Read files until budget exhausted — agents analyze this directly.
 	var buf strings.Builder
-	fmt.Fprintf(&buf, "FILES IN REGION %q (%d files):\n", regionID, len(files))
-	for _, f := range files {
-		buf.WriteString("  " + f + "\n")
-	}
-	buf.WriteString("\n")
-
-	// Read files until budget exhausted.
-	// Higher budget = agents can analyze directly without tool calls.
-	const budget = 30000
+	const budget = 20000
 	sampled := 0
 	for _, rel := range files {
 		if buf.Len() > budget {

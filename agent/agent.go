@@ -499,29 +499,35 @@ func classifyFindingSeverity(work string) float64 {
 func (a *Agent) doWork(pt Point, targetSig Signal, localVal float64) string {
 	budget := effortBudget(localVal)
 
-	// Build context from existing findings (stigmergy).
+	// Build context from existing findings (stigmergy). Cap at 10 to limit tokens.
 	existingFindings := ""
 	if len(pt.Findings) > 0 {
 		var fb strings.Builder
-		fb.WriteString("EXISTING FINDINGS AT THIS REGION (from other agents — do NOT repeat these):\n")
-		for _, f := range pt.Findings {
-			fb.WriteString("  - " + truncateStr(f, 200) + "\n")
+		fb.WriteString("EXISTING FINDINGS (do NOT repeat):\n")
+		cap := len(pt.Findings)
+		start := 0
+		if cap > 10 {
+			start = cap - 10
+			cap = 10
+		}
+		for _, f := range pt.Findings[start:] {
+			fb.WriteString("- " + truncateStr(f, 150) + "\n")
 		}
 		existingFindings = fb.String()
 	}
 
-	// Build system prompt.
+	// Build system prompt. Pass empty code to template — we add content once below.
 	var systemPrompt string
 	if tmpl, ok := a.roles.RolePrompts[a.Role]; ok && tmpl != "" {
-		systemPrompt = expandTemplate(tmpl, a.PointID, localVal, pt.Content)
+		systemPrompt = expandTemplate(tmpl, a.PointID, localVal, "")
 	} else {
-		systemPrompt = fmt.Sprintf("You are a %s specialist analyzing the \"%s\" region.\nSignal %s = %.2f (0=fine, 1=critical).",
+		systemPrompt = fmt.Sprintf("You are a %s specialist analyzing the \"%s\" region. Signal %s = %.2f.",
 			a.Role, a.PointID, targetSig, localVal)
 	}
 
-	// Include pre-loaded content — this IS the region data, agents don't need to re-fetch it.
+	// Include pre-loaded content ONCE (was duplicated via {{.Code}} + explicit append).
 	if pt.Content != "" {
-		systemPrompt += "\n\nREGION SOURCE CODE (already loaded — DO NOT use list_files or read_file for files shown below):\n" + truncateStr(pt.Content, 12000)
+		systemPrompt += "\n\nSOURCE CODE:\n" + truncateStr(pt.Content, 12000)
 	}
 
 	// Emergent focus: on first work cycle, agent refines its specialization.

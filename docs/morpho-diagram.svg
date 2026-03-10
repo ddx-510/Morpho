@@ -1,0 +1,306 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 700" font-family="'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0a0f1a;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#111827;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="mint" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#34d399;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#6ee7b7;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="mintFade" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#34d399;stop-opacity:0.15" />
+      <stop offset="100%" style="stop-color:#6ee7b7;stop-opacity:0.05" />
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="3" result="blur" />
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="softGlow">
+      <feGaussianBlur stdDeviation="6" result="blur" />
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <!-- Chemical gradient radial -->
+    <radialGradient id="chemGreen" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" style="stop-color:#34d399;stop-opacity:0.25" />
+      <stop offset="100%" style="stop-color:#34d399;stop-opacity:0" />
+    </radialGradient>
+    <radialGradient id="chemAmber" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" style="stop-color:#fbbf24;stop-opacity:0.2" />
+      <stop offset="100%" style="stop-color:#fbbf24;stop-opacity:0" />
+    </radialGradient>
+    <radialGradient id="chemRed" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" style="stop-color:#f87171;stop-opacity:0.18" />
+      <stop offset="100%" style="stop-color:#f87171;stop-opacity:0" />
+    </radialGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="700" fill="url(#bg)" rx="16"/>
+
+  <!-- Subtle grid -->
+  <g opacity="0.04" stroke="#6ee7b7">
+    <line x1="0" y1="100" x2="1200" y2="100" stroke-width="0.5"/>
+    <line x1="0" y1="200" x2="1200" y2="200" stroke-width="0.5"/>
+    <line x1="0" y1="300" x2="1200" y2="300" stroke-width="0.5"/>
+    <line x1="0" y1="400" x2="1200" y2="400" stroke-width="0.5"/>
+    <line x1="0" y1="500" x2="1200" y2="500" stroke-width="0.5"/>
+    <line x1="0" y1="600" x2="1200" y2="600" stroke-width="0.5"/>
+    <line x1="200" y1="0" x2="200" y2="700" stroke-width="0.5"/>
+    <line x1="400" y1="0" x2="400" y2="700" stroke-width="0.5"/>
+    <line x1="600" y1="0" x2="600" y2="700" stroke-width="0.5"/>
+    <line x1="800" y1="0" x2="800" y2="700" stroke-width="0.5"/>
+    <line x1="1000" y1="0" x2="1000" y2="700" stroke-width="0.5"/>
+  </g>
+
+  <!-- Title -->
+  <text x="600" y="52" text-anchor="middle" fill="#f0fdf4" font-size="28" font-weight="700" letter-spacing="0.5">Morpho</text>
+  <text x="600" y="78" text-anchor="middle" fill="#6ee7b7" font-size="13" font-weight="400" opacity="0.7" letter-spacing="2">MORPHOGENETIC MULTI-AGENT FRAMEWORK</text>
+
+  <!-- ═══════════════════════════════════════════════════ -->
+  <!-- GRADIENT FIELD — 5 regions as hexagonal nodes      -->
+  <!-- ═══════════════════════════════════════════════════ -->
+
+  <!-- Chemical gradient clouds -->
+  <circle cx="250" cy="280" r="110" fill="url(#chemGreen)"/>
+  <circle cx="580" cy="230" r="130" fill="url(#chemAmber)"/>
+  <circle cx="920" cy="280" r="120" fill="url(#chemRed)"/>
+  <circle cx="400" cy="460" r="100" fill="url(#chemGreen)"/>
+  <circle cx="750" cy="470" r="115" fill="url(#chemAmber)"/>
+
+  <!-- Inter-region links (import topology) -->
+  <g stroke="#34d399" stroke-width="1" opacity="0.15">
+    <line x1="250" y1="280" x2="580" y2="230"/>
+    <line x1="580" y1="230" x2="920" y2="280"/>
+    <line x1="250" y1="280" x2="400" y2="460"/>
+    <line x1="580" y1="230" x2="400" y2="460"/>
+    <line x1="580" y1="230" x2="750" y2="470"/>
+    <line x1="920" y1="280" x2="750" y2="470"/>
+    <line x1="400" y1="460" x2="750" y2="470"/>
+  </g>
+
+  <!-- Signal flow arrows (finding propagation) -->
+  <g fill="none" stroke="#34d399" stroke-width="1.5" opacity="0.3">
+    <!-- src → api -->
+    <path d="M290 265 Q 420 220 540 230" marker-end="url(#arrowGreen)"/>
+    <!-- api → db -->
+    <path d="M610 255 Q 520 360 430 440" marker-end="url(#arrowGreen)"/>
+    <!-- api → auth -->
+    <path d="M620 240 Q 780 230 880 270" marker-end="url(#arrowGreen)"/>
+  </g>
+  <defs>
+    <marker id="arrowGreen" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6" fill="none" stroke="#34d399" stroke-width="1"/>
+    </marker>
+  </defs>
+
+  <!-- ── Region: src/ ──────────────────────────── -->
+  <g transform="translate(250,280)">
+    <rect x="-65" y="-35" width="130" height="70" rx="12" fill="#111827" stroke="#34d399" stroke-width="1.5" opacity="0.9"/>
+    <text x="0" y="-8" text-anchor="middle" fill="#6ee7b7" font-size="14" font-weight="600">src/</text>
+    <text x="0" y="12" text-anchor="middle" fill="#9ca3af" font-size="10">signal: 0.82</text>
+    <!-- Agents -->
+    <circle cx="-30" cy="-18" r="5" fill="#34d399" filter="url(#glow)" opacity="0.9"/>
+    <circle cx="-15" cy="-20" r="4" fill="#fbbf24" filter="url(#glow)" opacity="0.8"/>
+    <circle cx="30" cy="-18" r="5" fill="#34d399" filter="url(#glow)" opacity="0.9"/>
+  </g>
+
+  <!-- ── Region: api/ ──────────────────────────── -->
+  <g transform="translate(580,230)">
+    <rect x="-65" y="-35" width="130" height="70" rx="12" fill="#111827" stroke="#fbbf24" stroke-width="1.5" opacity="0.9"/>
+    <text x="0" y="-8" text-anchor="middle" fill="#fde68a" font-size="14" font-weight="600">api/</text>
+    <text x="0" y="12" text-anchor="middle" fill="#9ca3af" font-size="10">signal: 0.91</text>
+    <!-- Agents — tissue cluster -->
+    <circle cx="-25" cy="-18" r="5" fill="#34d399" filter="url(#glow)" opacity="0.9"/>
+    <circle cx="-10" cy="-22" r="4" fill="#f87171" filter="url(#glow)" opacity="0.9"/>
+    <circle cx="5" cy="-17" r="5" fill="#34d399" filter="url(#glow)" opacity="0.9"/>
+    <circle cx="20" cy="-21" r="4" fill="#fbbf24" filter="url(#glow)" opacity="0.8"/>
+    <circle cx="35" cy="-18" r="3" fill="#a78bfa" filter="url(#glow)" opacity="0.7"/>
+    <!-- Tissue indicator -->
+    <rect x="-30" y="-27" width="70" height="16" rx="8" fill="none" stroke="#34d399" stroke-width="0.8" stroke-dasharray="3,2" opacity="0.4"/>
+  </g>
+
+  <!-- ── Region: auth/ ─────────────────────────── -->
+  <g transform="translate(920,280)">
+    <rect x="-65" y="-35" width="130" height="70" rx="12" fill="#111827" stroke="#f87171" stroke-width="1.5" opacity="0.9"/>
+    <text x="0" y="-8" text-anchor="middle" fill="#fca5a5" font-size="14" font-weight="600">auth/</text>
+    <text x="0" y="12" text-anchor="middle" fill="#9ca3af" font-size="10">signal: 0.67</text>
+    <!-- Agents -->
+    <circle cx="-20" cy="-18" r="5" fill="#f87171" filter="url(#glow)" opacity="0.9"/>
+    <circle cx="20" cy="-20" r="4" fill="#34d399" filter="url(#glow)" opacity="0.8"/>
+  </g>
+
+  <!-- ── Region: models/ ───────────────────────── -->
+  <g transform="translate(400,460)">
+    <rect x="-65" y="-35" width="130" height="70" rx="12" fill="#111827" stroke="#34d399" stroke-width="1" opacity="0.9"/>
+    <text x="0" y="-8" text-anchor="middle" fill="#6ee7b7" font-size="14" font-weight="600">models/</text>
+    <text x="0" y="12" text-anchor="middle" fill="#9ca3af" font-size="10">signal: 0.45</text>
+    <!-- Agent migrating in -->
+    <circle cx="0" cy="-19" r="4" fill="#a78bfa" filter="url(#glow)" opacity="0.7"/>
+  </g>
+
+  <!-- ── Region: routes/ ───────────────────────── -->
+  <g transform="translate(750,470)">
+    <rect x="-65" y="-35" width="130" height="70" rx="12" fill="#111827" stroke="#fbbf24" stroke-width="1.5" opacity="0.9"/>
+    <text x="0" y="-8" text-anchor="middle" fill="#fde68a" font-size="14" font-weight="600">routes/</text>
+    <text x="0" y="12" text-anchor="middle" fill="#9ca3af" font-size="10">signal: 0.73</text>
+    <!-- Agents -->
+    <circle cx="-20" cy="-18" r="5" fill="#34d399" filter="url(#glow)" opacity="0.9"/>
+    <circle cx="5" cy="-20" r="4" fill="#fbbf24" filter="url(#glow)" opacity="0.8"/>
+    <circle cx="25" cy="-17" r="3" fill="#34d399" filter="url(#glow)" opacity="0.6"/>
+  </g>
+
+  <!-- ── Chemotaxis arrow (agent migrating) ────── -->
+  <g opacity="0.5">
+    <path d="M320 310 Q 350 380 385 430" fill="none" stroke="#a78bfa" stroke-width="1.5" stroke-dasharray="4,3"/>
+    <circle cx="355" cy="375" r="3" fill="#a78bfa" opacity="0.6"/>
+    <text x="310" y="375" fill="#a78bfa" font-size="9" opacity="0.7">chemotaxis</text>
+  </g>
+
+  <!-- ── Mitosis indicator at api/ ─────────────── -->
+  <g transform="translate(640,195)" opacity="0.6">
+    <circle cx="0" cy="0" r="4" fill="#34d399"/>
+    <line x1="6" y1="-4" x2="14" y2="-10" stroke="#34d399" stroke-width="1"/>
+    <circle cx="16" cy="-12" r="3" fill="#34d399" opacity="0.6"/>
+    <text x="22" y="-8" fill="#34d399" font-size="9">mitosis</text>
+  </g>
+
+  <!-- ── Apoptosis indicator ───────────────────── -->
+  <g transform="translate(970,320)" opacity="0.5">
+    <circle cx="0" cy="0" r="4" fill="#f87171" opacity="0.4"/>
+    <line x1="-3" y1="-3" x2="3" y2="3" stroke="#f87171" stroke-width="1.2"/>
+    <line x1="3" y1="-3" x2="-3" y2="3" stroke="#f87171" stroke-width="1.2"/>
+    <text x="10" y="4" fill="#f87171" font-size="9">apoptosis</text>
+  </g>
+
+  <!-- ═══════════════════════════════════════════════════ -->
+  <!-- LEGEND                                              -->
+  <!-- ═══════════════════════════════════════════════════ -->
+  <g transform="translate(50, 590)">
+    <text x="0" y="0" fill="#9ca3af" font-size="11" font-weight="600" letter-spacing="1">LEGEND</text>
+
+    <!-- Agent types -->
+    <circle cx="10" cy="22" r="5" fill="#34d399" filter="url(#glow)"/>
+    <text x="22" y="26" fill="#d1d5db" font-size="10">Specialized agent</text>
+
+    <circle cx="130" cy="22" r="5" fill="#a78bfa" filter="url(#glow)"/>
+    <text x="142" y="26" fill="#d1d5db" font-size="10">Migrating (stem)</text>
+
+    <circle cx="260" cy="22" r="5" fill="#f87171" filter="url(#glow)" opacity="0.4"/>
+    <text x="272" y="26" fill="#d1d5db" font-size="10">Dying (apoptotic)</text>
+
+    <!-- Signals -->
+    <rect x="390" y="16" width="12" height="12" rx="3" fill="none" stroke="#34d399" stroke-width="1.5"/>
+    <text x="408" y="26" fill="#d1d5db" font-size="10">Low signal region</text>
+
+    <rect x="520" y="16" width="12" height="12" rx="3" fill="none" stroke="#fbbf24" stroke-width="1.5"/>
+    <text x="538" y="26" fill="#d1d5db" font-size="10">Medium signal</text>
+
+    <rect x="630" y="16" width="12" height="12" rx="3" fill="none" stroke="#f87171" stroke-width="1.5"/>
+    <text x="648" y="26" fill="#d1d5db" font-size="10">High signal (critical)</text>
+
+    <rect x="780" y="14" width="30" height="14" rx="7" fill="none" stroke="#34d399" stroke-width="0.8" stroke-dasharray="3,2" opacity="0.6"/>
+    <text x="816" y="26" fill="#d1d5db" font-size="10">Tissue cluster</text>
+  </g>
+
+  <!-- ═══════════════════════════════════════════════════ -->
+  <!-- RIGHT SIDE — Lifecycle + Benchmark                  -->
+  <!-- ═══════════════════════════════════════════════════ -->
+
+  <!-- Lifecycle column -->
+  <g transform="translate(1060, 110)">
+    <text x="0" y="0" fill="#9ca3af" font-size="11" font-weight="600" letter-spacing="1">LIFECYCLE</text>
+
+    <g transform="translate(0, 24)">
+      <circle cx="8" cy="0" r="6" fill="none" stroke="#9ca3af" stroke-width="1.2"/>
+      <text x="22" y="4" fill="#d1d5db" font-size="11">Spawn</text>
+    </g>
+    <line x1="8" y1="34" x2="8" y2="48" stroke="#4b5563" stroke-width="1"/>
+
+    <g transform="translate(0, 56)">
+      <circle cx="8" cy="0" r="6" fill="none" stroke="#34d399" stroke-width="1.2"/>
+      <circle cx="8" cy="0" r="2.5" fill="#34d399"/>
+      <text x="22" y="4" fill="#d1d5db" font-size="11">Differentiate</text>
+    </g>
+    <line x1="8" y1="66" x2="8" y2="80" stroke="#4b5563" stroke-width="1"/>
+
+    <g transform="translate(0, 88)">
+      <circle cx="8" cy="0" r="6" fill="#34d399" opacity="0.8"/>
+      <text x="22" y="4" fill="#d1d5db" font-size="11">Work</text>
+    </g>
+    <line x1="8" y1="98" x2="8" y2="112" stroke="#4b5563" stroke-width="1"/>
+
+    <g transform="translate(0, 120)">
+      <circle cx="8" cy="0" r="6" fill="#fbbf24" opacity="0.7"/>
+      <text x="22" y="4" fill="#d1d5db" font-size="11">Signal</text>
+    </g>
+    <line x1="8" y1="130" x2="8" y2="144" stroke="#4b5563" stroke-width="1"/>
+
+    <!-- Branch: migrate or divide or die -->
+    <g transform="translate(0, 152)">
+      <line x1="8" y1="0" x2="-15" y2="30" stroke="#4b5563" stroke-width="1"/>
+      <line x1="8" y1="0" x2="8" y2="30" stroke="#4b5563" stroke-width="1"/>
+      <line x1="8" y1="0" x2="31" y2="30" stroke="#4b5563" stroke-width="1"/>
+
+      <circle cx="-15" cy="34" r="5" fill="#a78bfa" opacity="0.7"/>
+      <text x="-15" y="50" text-anchor="middle" fill="#a78bfa" font-size="8">Migrate</text>
+
+      <circle cx="8" cy="34" r="5" fill="#34d399" opacity="0.7"/>
+      <circle cx="15" cy="30" r="3" fill="#34d399" opacity="0.5"/>
+      <text x="10" y="50" text-anchor="middle" fill="#34d399" font-size="8">Divide</text>
+
+      <circle cx="31" cy="34" r="5" fill="#f87171" opacity="0.4"/>
+      <text x="31" y="50" text-anchor="middle" fill="#f87171" font-size="8">Die</text>
+    </g>
+  </g>
+
+  <!-- ═══════════════════════════════════════════════════ -->
+  <!-- BENCHMARK BAR CHART                                 -->
+  <!-- ═══════════════════════════════════════════════════ -->
+  <g transform="translate(50, 110)">
+    <text x="0" y="0" fill="#9ca3af" font-size="11" font-weight="600" letter-spacing="1">BENCHMARK vs NAIVE PARALLEL</text>
+
+    <!-- Gogs -->
+    <text x="0" y="28" fill="#d1d5db" font-size="10">Gogs</text>
+    <rect x="55" y="18" width="36" height="12" rx="2" fill="#4b5563" opacity="0.6"/>
+    <rect x="55" y="18" width="100" height="12" rx="2" fill="url(#mint)" opacity="0.8"/>
+    <text x="160" y="28" fill="#6ee7b7" font-size="9" font-weight="600">2.8x</text>
+
+    <!-- Juice Shop -->
+    <text x="0" y="48" fill="#d1d5db" font-size="10">Juice Shop</text>
+    <rect x="55" y="38" width="26" height="12" rx="2" fill="#4b5563" opacity="0.6"/>
+    <rect x="55" y="38" width="73" height="12" rx="2" fill="url(#mint)" opacity="0.8"/>
+    <text x="133" y="48" fill="#6ee7b7" font-size="9" font-weight="600">2.8x</text>
+
+    <!-- Syncthing -->
+    <text x="0" y="68" fill="#d1d5db" font-size="10">Syncthing</text>
+    <rect x="55" y="58" width="25" height="12" rx="2" fill="#4b5563" opacity="0.6"/>
+    <rect x="55" y="58" width="92" height="12" rx="2" fill="url(#mint)" opacity="0.8"/>
+    <text x="152" y="68" fill="#6ee7b7" font-size="9" font-weight="600">3.7x</text>
+
+    <!-- Saleor -->
+    <text x="0" y="88" fill="#d1d5db" font-size="10">Saleor</text>
+    <rect x="55" y="78" width="32" height="12" rx="2" fill="#4b5563" opacity="0.6"/>
+    <rect x="55" y="78" width="123" height="12" rx="2" fill="url(#mint)" opacity="0.8"/>
+    <text x="183" y="88" fill="#6ee7b7" font-size="9" font-weight="600">4.1x</text>
+
+    <!-- Labels -->
+    <rect x="55" y="100" width="10" height="8" rx="1" fill="#4b5563" opacity="0.6"/>
+    <text x="70" y="108" fill="#9ca3af" font-size="8">Naive</text>
+    <rect x="100" y="100" width="10" height="8" rx="1" fill="#34d399" opacity="0.8"/>
+    <text x="115" y="108" fill="#9ca3af" font-size="8">Morpho</text>
+  </g>
+
+  <!-- Chemical signals floating labels -->
+  <g opacity="0.35" font-size="8" fill="#34d399">
+    <text x="430" y="310" transform="rotate(-12, 430, 310)">PRESENCE</text>
+    <text x="680" y="350" transform="rotate(8, 680, 350)">DISCOVERY</text>
+    <text x="830" y="380" transform="rotate(-5, 830, 380)">DISTRESS</text>
+    <text x="310" y="400" transform="rotate(6, 310, 400)">FINDING</text>
+    <text x="570" y="500" transform="rotate(-3, 570, 500)">SATURATION</text>
+    <text x="180" y="370" transform="rotate(10, 180, 370)">NUTRIENT</text>
+  </g>
+
+  <!-- Bottom tagline -->
+  <text x="600" y="670" text-anchor="middle" fill="#6b7280" font-size="11" font-style="italic">Agents self-organize like cells. No orchestrator needed.</text>
+</svg>

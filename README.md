@@ -4,6 +4,8 @@
 
 No orchestrator. No predefined workflows. Agents spawn, differentiate, communicate through chemical signals, migrate toward problems, divide when overwhelmed, and die when done — all from local rules, just like embryonic development.
 
+![Morpho Architecture](docs/morpho-diagram.svg)
+
 ## Why Morphogenesis?
 
 Every multi-agent AI framework today uses the same pattern: a central orchestrator assigns tasks to worker agents. This is a factory floor, not intelligence.

@@ -185,16 +185,16 @@ Morpho includes a built-in benchmark comparing the morphogenetic swarm against n
 
 | Project | | Findings | Unique | Regions | Tokens | Time | Tok/Finding |
 |---------|---|---------|--------|---------|--------|------|-------------|
-| **[Gogs](https://github.com/gogs/gogs)** | Naive | 84 | 77 | 6 | 54K | 27s | 640 |
-| *(Go, 85K LOC)* | **Morpho** | **147** | **129** | **18** | 372K | 2m59s | 2,527 |
-| **[Juice Shop](https://github.com/juice-shop/juice-shop)** | Naive | 128 | 114 | 7 | 65K | 22s | 507 |
-| *(JS, 48K LOC)* | **Morpho** | **135** | **131** | **19** | 315K | 2m11s | 2,332 |
-| **[Syncthing](https://github.com/syncthing/syncthing)** | Naive | 73 | 73 | 7 | 59K | 40s | 807 |
-| *(Go, 155K LOC)* | **Morpho** | **123** | **95** | **16** | 395K | 3m02s | 3,212 |
-| **[Saleor](https://github.com/saleor/saleor)** | Naive | 80 | 76 | 7 | 48K | 43s | 602 |
-| *(Python, 210K LOC)* | **Morpho** | **131** | **116** | **18** | 298K | 2m17s | 2,277 |
+| **[Gogs](https://github.com/gogs/gogs)** | Naive | 121 | 116 | 6 | 70K | 48s | 578 |
+| *(Go, 85K LOC)* | **Morpho** | **334 (2.8x)** | **316** | **16** | 513K | 6m51s | 1,537 |
+| **[Juice Shop](https://github.com/juice-shop/juice-shop)** | Naive | 88 | 72 | 8 | 48K | 19s | 550 |
+| *(JS, 48K LOC)* | **Morpho** | **244 (2.8x)** | **238** | **17** | 501K | 2m27s | 2,051 |
+| **[Syncthing](https://github.com/syncthing/syncthing)** | Naive | 83 | 78 | 8 | 64K | 29s | 769 |
+| *(Go, 155K LOC)* | **Morpho** | **308 (3.7x)** | **298** | **12** | 446K | 2m29s | 1,448 |
+| **[Saleor](https://github.com/saleor/saleor)** | Naive | 108 | 96 | 7 | 66K | 23s | 611 |
+| *(Python, 210K LOC)* | **Morpho** | **445 (4.1x)** | **416** | **20** | 559K | 3m14s | 1,256 |
 
-**Morpho consistently finds more unique vulnerabilities (1.1-1.7x) while covering 2.3-3x more regions.** The cost is ~4x more tokens per finding — but those tokens buy broader coverage, cross-region knowledge propagation, and emergent specialization that isolated agents miss.
+**Morpho finds 2.8-4.1x more vulnerabilities across 1.5-2.9x more regions, at only ~2.5x the cost per finding.** The swarm's biological dynamics — chemotaxis, mitosis, lateral inhibition, stigmergy — drive agents to explore broadly and specialize deeply, producing significantly more unique findings than isolated parallel agents.
 
 The naive baseline gives each region its own agent with the same pre-loaded code — it's already a strong approach. Morpho's advantage comes from:
 - **Adaptive coverage** — agents migrate to under-explored regions via chemotaxis

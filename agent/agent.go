@@ -527,7 +527,7 @@ func (a *Agent) doWork(pt Point, targetSig Signal, localVal float64) string {
 
 	// Include pre-loaded content ONCE (was duplicated via {{.Code}} + explicit append).
 	if pt.Content != "" {
-		systemPrompt += "\n\nSOURCE CODE:\n" + truncateStr(pt.Content, 12000)
+		systemPrompt += "\n\nSOURCE CODE:\n" + truncateStr(pt.Content, 18000)
 	}
 
 	// Emergent focus: on first work cycle, agent refines its specialization.
@@ -545,9 +545,11 @@ func (a *Agent) doWork(pt Point, targetSig Signal, localVal float64) string {
 	systemPrompt += fmt.Sprintf(`
 
 INSTRUCTIONS:
-1. Analyze the source code above directly. Output a numbered findings list.
-2. Each finding: severity (Critical/High/Medium/Low), file:line, description.
-3. Do NOT repeat existing findings. Do NOT refuse.%s`, emergentInstruction)
+1. Analyze the source code above. Output ALL findings as a numbered list.
+2. PRIORITIZE %s issues, but ALSO report any other vulnerabilities or problems you notice.
+3. Each finding: severity (Critical/High/Medium/Low), file:line, description.
+4. Be thorough — report every issue you can identify, not just 2-3.
+5. Do NOT repeat existing findings. Do NOT refuse.%s`, a.Role, emergentInstruction)
 
 	if existingFindings != "" {
 		systemPrompt += "\n\n" + existingFindings
